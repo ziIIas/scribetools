@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.1.1
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -318,7 +318,8 @@
         });
         
         // 'cause (because) - be careful not to change "cause" as in "the cause of"
-        fixedText = fixedText.replace(/\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
+        // Also avoid matching when already preceded by an apostrophe
+        fixedText = fixedText.replace(/(?<!')\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
             if (match === 'CAUSE') return "'CAUSE";
             if (match === 'Cause') return "'Cause";
             return "'cause";
@@ -332,7 +333,8 @@
         });
         
         // 'fore (before)
-        fixedText = fixedText.replace(/\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
+        // Also avoid matching when already preceded by an apostrophe
+        fixedText = fixedText.replace(/(?<!')\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
             if (match === 'FORE') return "'FORE";
             if (match === 'Fore') return "'Fore";
             return "'fore";
