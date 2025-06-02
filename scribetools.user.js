@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      1.1.1
+// @version      1.2
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -70,6 +70,119 @@
         });
 
         return button;
+    }
+
+    // Function to create the zero-width space button
+    function createZeroWidthSpaceButton() {
+        const button = document.createElement('button');
+        button.innerHTML = 'Copy Zero-Width Space';
+        button.title = 'Copy a zero-width space (​) to clipboard - useful for spacing fixes';
+        button.id = 'genius-zws-button';
+        button.type = 'button';
+        
+        // Style to match Genius small buttons (like Edit Metadata button)
+        button.className = 'SmallButton__Container-sc-70651651-0 gsusny';
+        
+        // Additional custom styling to match the small button style
+        button.style.cssText = `
+            margin-bottom: 0.5rem;
+            background-color: transparent;
+            border: 1px solid #ccc;
+            color: #666;
+            font-weight: 400;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            font-size: 0.875rem;
+            line-height: 1.1;
+            padding: 0.375rem 0.75rem;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            min-width: auto;
+            display: inline-block;
+            position: relative;
+        `;
+
+        // Add hover effects
+        button.addEventListener('mouseenter', function() {
+            button.style.backgroundColor = '#f5f5f5';
+            button.style.borderColor = '#999';
+        });
+
+        button.addEventListener('mouseleave', function() {
+            button.style.backgroundColor = 'transparent';
+            button.style.borderColor = '#ccc';
+        });
+
+        // Copy zero-width space to clipboard
+        button.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const zeroWidthSpace = '​'; // This is U+200B zero-width space
+            
+            // Try to copy to clipboard
+            try {
+                navigator.clipboard.writeText(zeroWidthSpace).then(() => {
+                    // Success feedback
+                    const originalText = button.innerHTML;
+                    button.innerHTML = 'Copied!';
+                    button.style.backgroundColor = '#10b981';
+                    button.style.borderColor = '#10b981';
+                    button.style.color = '#fff';
+                    
+                    setTimeout(() => {
+                        button.innerHTML = originalText;
+                        button.style.backgroundColor = 'transparent';
+                        button.style.borderColor = '#ccc';
+                        button.style.color = '#666';
+                    }, 1000);
+                }).catch(() => {
+                    // Fallback method
+                    fallbackCopyToClipboard(zeroWidthSpace, button);
+                });
+            } catch (e) {
+                // Fallback method
+                fallbackCopyToClipboard(zeroWidthSpace, button);
+            }
+        });
+
+        return button;
+    }
+
+    // Fallback clipboard copy method
+    function fallbackCopyToClipboard(text, button) {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            document.execCommand('copy');
+            // Success feedback
+            const originalText = button.innerHTML;
+            button.innerHTML = 'Copied!';
+            button.style.backgroundColor = '#10b981';
+            button.style.borderColor = '#10b981';
+            button.style.color = '#fff';
+            
+            setTimeout(() => {
+                button.innerHTML = originalText;
+                button.style.backgroundColor = 'transparent';
+                button.style.borderColor = '#ccc';
+                button.style.color = '#666';
+            }, 1000);
+        } catch (e) {
+            // Error feedback
+            button.innerHTML = 'Copy Failed';
+            setTimeout(() => {
+                button.innerHTML = 'Copy Zero-Width Space';
+            }, 1000);
+        }
+        
+        document.body.removeChild(textArea);
     }
 
     // Function to create the auto fix button
@@ -363,8 +476,13 @@
                     
                     // Add text before the parenthesis (if any) with both formatting tags
                     const beforeParen = remaining.substring(0, openIndex);
-                    if (beforeParen.trim()) {
-                        result += `<${outerTag}><${innerTag}>${beforeParen}</${innerTag}></${outerTag}>`;
+                    if (beforeParen) {
+                        // If it's just whitespace, don't wrap in formatting tags
+                        if (beforeParen.trim()) {
+                            result += `<${outerTag}><${innerTag}>${beforeParen}</${innerTag}></${outerTag}>`;
+                        } else {
+                            result += beforeParen; // Just add the whitespace as-is
+                        }
                     }
                     
                     // Add the parenthetical content with both formatting tags inside
@@ -376,8 +494,13 @@
                 }
                 
                 // Add any remaining text with both formatting tags
-                if (remaining.trim()) {
-                    result += `<${outerTag}><${innerTag}>${remaining}</${innerTag}></${outerTag}>`;
+                if (remaining) {
+                    // If it's just whitespace, don't wrap in formatting tags
+                    if (remaining.trim()) {
+                        result += `<${outerTag}><${innerTag}>${remaining}</${innerTag}></${outerTag}>`;
+                    } else {
+                        result += remaining; // Just add the whitespace as-is
+                    }
                 }
                 
                 return result;
@@ -404,8 +527,13 @@
                     
                     // Add text before the parenthesis (if any) with formatting
                     const beforeParen = remaining.substring(0, openIndex);
-                    if (beforeParen.trim()) {
-                        result += `<${tag}>${beforeParen}</${tag}>`;
+                    if (beforeParen) {
+                        // If it's just whitespace, don't wrap in formatting tags
+                        if (beforeParen.trim()) {
+                            result += `<${tag}>${beforeParen}</${tag}>`;
+                        } else {
+                            result += beforeParen; // Just add the whitespace as-is
+                        }
                     }
                     
                     // Add the parenthetical content with formatting inside
@@ -417,8 +545,13 @@
                 }
                 
                 // Add any remaining text with formatting
-                if (remaining.trim()) {
-                    result += `<${tag}>${remaining}</${tag}>`;
+                if (remaining) {
+                    // If it's just whitespace, don't wrap in formatting tags
+                    if (remaining.trim()) {
+                        result += `<${tag}>${remaining}</${tag}>`;
+                    } else {
+                        result += remaining; // Just add the whitespace as-is
+                    }
                 }
                 
                 return result;
@@ -969,11 +1102,22 @@
         }
     }
 
+    // Function to check if we're on a lyrics page
+    function isOnLyricsPage() {
+        return window.location.pathname.endsWith('-lyrics');
+    }
+
     // Function to add buttons to lyrics editor
     function addButtonToEditor() {
+        // Only add buttons on lyrics pages
+        if (!isOnLyricsPage()) {
+            console.log('Not on a lyrics page, skipping button addition');
+            return false;
+        }
         // Remove any existing buttons first
         const existingToggleButton = document.getElementById('genius-emdash-toggle');
         const existingAutoFixButton = document.getElementById('genius-autofix-button');
+        const existingZwsButton = document.getElementById('genius-zws-button');
         if (existingToggleButton) {
             existingToggleButton.remove();
             console.log('Removed existing em dash button');
@@ -981,6 +1125,10 @@
         if (existingAutoFixButton) {
             existingAutoFixButton.remove();
             console.log('Removed existing auto fix button');
+        }
+        if (existingZwsButton) {
+            existingZwsButton.remove();
+            console.log('Removed existing zero-width space button');
         }
 
         // Look for the lyrics editor controls container (try multiple approaches)
@@ -993,19 +1141,29 @@
         if (controlsContainer) {
             console.log('Found controls container:', controlsContainer);
             
-            // Create both buttons
+            // Create all buttons
             toggleButton = createToggleButton();
             autoFixButton = createAutoFixButton();
+            const zwsButton = createZeroWidthSpaceButton();
             
-            // Create a container div for our buttons to keep them together
-            const buttonContainer = document.createElement('div');
-            buttonContainer.style.cssText = `
+            // Create a container div for the main buttons (em dash and auto fix)
+            const mainButtonContainer = document.createElement('div');
+            mainButtonContainer.style.cssText = `
                 display: flex;
                 align-items: center;
                 margin-bottom: 0.5rem;
             `;
-            buttonContainer.appendChild(toggleButton);
-            buttonContainer.appendChild(autoFixButton);
+            mainButtonContainer.appendChild(toggleButton);
+            mainButtonContainer.appendChild(autoFixButton);
+            
+            // Create a container div for the zero-width space button (smaller, separate line)
+            const zwsButtonContainer = document.createElement('div');
+            zwsButtonContainer.style.cssText = `
+                display: flex;
+                align-items: center;
+                margin-bottom: 0.5rem;
+            `;
+            zwsButtonContainer.appendChild(zwsButton);
             
             // Look for the "How to Format Lyrics" section to insert before it
             const formatExplainer = controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
@@ -1014,11 +1172,13 @@
             
             if (formatExplainer && formatExplainer.textContent && formatExplainer.textContent.includes('Format')) {
                 // Insert before the explainer (above "How to Format Lyrics:")
-                controlsContainer.insertBefore(buttonContainer, formatExplainer);
+                controlsContainer.insertBefore(mainButtonContainer, formatExplainer);
+                controlsContainer.insertBefore(zwsButtonContainer, formatExplainer);
                 console.log('Inserted buttons before format explainer');
             } else {
                 // Fallback: append to the container
-                controlsContainer.appendChild(buttonContainer);
+                controlsContainer.appendChild(mainButtonContainer);
+                controlsContainer.appendChild(zwsButtonContainer);
                 console.log('Appended buttons to controls container');
             }
             
@@ -1066,8 +1226,8 @@
         // Try to add button to editor if it exists
         const buttonAdded = addButtonToEditor();
         
-        // If that failed, try multiple fallback searches
-        if (!buttonAdded) {
+        // If that failed, try multiple fallback searches (but only on lyrics pages)
+        if (!buttonAdded && isOnLyricsPage()) {
             setTimeout(() => {
                 console.log('Retrying button placement with broader search...');
                 
@@ -1095,28 +1255,42 @@
                     // Remove any existing buttons
                     const existingToggle = document.getElementById('genius-emdash-toggle');
                     const existingAutoFix = document.getElementById('genius-autofix-button');
+                    const existingZws = document.getElementById('genius-zws-button');
                     if (existingToggle) existingToggle.remove();
                     if (existingAutoFix) existingAutoFix.remove();
+                    if (existingZws) existingZws.remove();
                     
-                    // Create both buttons
+                    // Create all buttons
                     toggleButton = createToggleButton();
                     autoFixButton = createAutoFixButton();
+                    const zwsButton = createZeroWidthSpaceButton();
                     
-                    // Create container for buttons
-                    const buttonContainer = document.createElement('div');
-                    buttonContainer.style.cssText = `
+                    // Create container for main buttons
+                    const mainButtonContainer = document.createElement('div');
+                    mainButtonContainer.style.cssText = `
                         display: flex;
                         align-items: center;
                         margin-bottom: 0.5rem;
                     `;
-                    buttonContainer.appendChild(toggleButton);
-                    buttonContainer.appendChild(autoFixButton);
+                    mainButtonContainer.appendChild(toggleButton);
+                    mainButtonContainer.appendChild(autoFixButton);
+                    
+                    // Create container for zero-width space button
+                    const zwsButtonContainer = document.createElement('div');
+                    zwsButtonContainer.style.cssText = `
+                        display: flex;
+                        align-items: center;
+                        margin-bottom: 0.5rem;
+                    `;
+                    zwsButtonContainer.appendChild(zwsButton);
                     
                     // Try to insert at the top of the container
                     if (targetContainer.firstChild) {
-                        targetContainer.insertBefore(buttonContainer, targetContainer.firstChild);
+                        targetContainer.insertBefore(mainButtonContainer, targetContainer.firstChild);
+                        targetContainer.insertBefore(zwsButtonContainer, targetContainer.firstChild.nextSibling);
                     } else {
-                        targetContainer.appendChild(buttonContainer);
+                        targetContainer.appendChild(mainButtonContainer);
+                        targetContainer.appendChild(zwsButtonContainer);
                     }
                     
                     updateButtonState();
@@ -1146,8 +1320,8 @@
                         )
                     );
 
-                    // Only try to add buttons if editor appeared and we don't already have them
-                    if (hasLyricsEditor && !document.getElementById('genius-emdash-toggle')) {
+                    // Only try to add buttons if editor appeared, we're on a lyrics page, and we don't already have them
+                    if (hasLyricsEditor && isOnLyricsPage() && !document.getElementById('genius-emdash-toggle') && !document.getElementById('genius-zws-button')) {
                         // Small delay to ensure the editor is fully rendered
                         setTimeout(addButtonToEditor, 100);
                     }
