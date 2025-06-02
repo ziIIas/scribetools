@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
 // @match        https://*.genius.com/*
+// @updateURL    https://github.com/ziIIas/scribetools/raw/refs/heads/main/scribetools.user.js
+// @downloadURL  https://github.com/ziIIas/scribetools/raw/refs/heads/main/scribetools.user.js
 // @grant        none
 // ==/UserScript==
 
@@ -74,7 +76,7 @@
     function createAutoFixButton() {
         const button = document.createElement('button');
         button.innerHTML = 'Auto Fix';
-        button.title = 'Auto-fix capitalization, contractions, parentheses formatting, and common errors (i → I, ima/imma → I\'ma, dont → don\'t, <i>(text)</i> → (<i>text</i>), etc.)';
+        button.title = 'Auto-fix capitalization, contractions, parentheses formatting, bracket matching, and common errors (i → I, ima/imma → I\'ma, dont → don\'t, ok → okay, yea → yeah, sumn → somethin\', gon → gon\', yall → y\'all, til → \'til, <i>(text)</i> → (<i>text</i>), highlights mismatched () and [], etc.)';
         button.id = 'genius-autofix-button';
         
         // Style to match Genius buttons
@@ -219,6 +221,125 @@
         
         console.log('After apostrophe fixes:', fixedText.includes("don't") ? 'FOUND APOSTROPHES' : 'NO APOSTROPHES FOUND');
 
+        // Additional word fixes
+        console.log('Starting additional word fixes...');
+        
+        // Fix "ok" to "okay" but preserve specific producer tag phrases
+        console.log('Processing ok → okay with whitelist...');
+        
+        // Store whitelisted phrases with placeholders to protect them
+        const okWhitelist = [
+            /ok,?\s+let\s+me\s+hear\s+your\s+tag/gi,
+            /ok\s+is\s+the\s+hardest,?\s+i\s+swear\s+to\s+god/gi
+        ];
+        
+        let protectedPhrases = [];
+        let placeholderIndex = 0;
+        
+        // Replace whitelisted phrases with placeholders
+        okWhitelist.forEach(pattern => {
+            fixedText = fixedText.replace(pattern, function(match) {
+                const placeholder = `__OK_PLACEHOLDER_${placeholderIndex}__`;
+                protectedPhrases.push({ placeholder: placeholder, original: match });
+                placeholderIndex++;
+                console.log('Protected phrase:', match);
+                return placeholder;
+            });
+        });
+        
+        // Now replace all remaining "ok" instances with "okay"
+        fixedText = fixedText.replace(/\bok\b/gi, function(match) {
+            // Preserve capitalization
+            if (match === 'OK') return 'OKAY';
+            if (match === 'Ok') return 'Okay';
+            return 'okay';
+        });
+        
+        // Restore the protected phrases
+        protectedPhrases.forEach(({ placeholder, original }) => {
+            fixedText = fixedText.replace(placeholder, original);
+            console.log('Restored phrase:', original);
+        });
+        
+        // Fix "sumn" to "somethin'"
+        fixedText = fixedText.replace(/\bsumn\b/gi, function(match) {
+            // Preserve capitalization
+            if (match === 'SUMN') return "SOMETHIN'";
+            if (match === 'Sumn') return "Somethin'";
+            return "somethin'";
+        });
+        
+        // Fix "yuh" and "yea" to "yeah" (preserve capitalization)
+        fixedText = fixedText.replace(/\byuh\b/gi, function(match) {
+            if (match === 'YUH') return 'YEAH';
+            if (match === 'Yuh') return 'Yeah';
+            return 'yeah';
+        });
+        
+        fixedText = fixedText.replace(/\byea\b/gi, function(match) {
+            if (match === 'YEA') return 'YEAH';
+            if (match === 'Yea') return 'Yeah';
+            return 'yeah';
+        });
+        
+        // Fix words ending with dash to em dash (only at end of words, not hyphens)
+        // Pattern: word followed by dash at end of word boundary
+        fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, '$1—');
+        
+        // Add missing apostrophes to common contractions
+        console.log('Adding missing apostrophes...');
+        
+        // Words that need apostrophes at the end
+        fixedText = fixedText.replace(/\bgon\b(?!')/gi, function(match) {
+            // Preserve capitalization
+            if (match === 'GON') return "GON'";
+            if (match === 'Gon') return "Gon'";
+            return "gon'";
+        });
+        
+        fixedText = fixedText.replace(/\bfuckin\b(?!')/gi, function(match) {
+            if (match === 'FUCKIN') return "FUCKIN'";
+            if (match === 'Fuckin') return "Fuckin'";
+            return "fuckin'";
+        });
+        
+        fixedText = fixedText.replace(/\byall\b(?!')/gi, function(match) {
+            if (match === 'YALL') return "Y'ALL";
+            if (match === 'Yall') return "Y'all";
+            return "y'all";
+        });
+        
+        // Words that need apostrophes at the beginning (but only in certain contexts)
+        // 'til (until)
+        fixedText = fixedText.replace(/\btil\b(?!')/gi, function(match) {
+            if (match === 'TIL') return "'TIL";
+            if (match === 'Til') return "'Til";
+            return "'til";
+        });
+        
+        // 'cause (because) - be careful not to change "cause" as in "the cause of"
+        fixedText = fixedText.replace(/\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
+            if (match === 'CAUSE') return "'CAUSE";
+            if (match === 'Cause') return "'Cause";
+            return "'cause";
+        });
+        
+        // 'bout (about)
+        fixedText = fixedText.replace(/\bbout\b(?!')/gi, function(match) {
+            if (match === 'BOUT') return "'BOUT";
+            if (match === 'Bout') return "'Bout";
+            return "'bout";
+        });
+        
+        // 'fore (before)
+        fixedText = fixedText.replace(/\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
+            if (match === 'FORE') return "'FORE";
+            if (match === 'Fore') return "'Fore";
+            return "'fore";
+        });
+        
+        console.log('After adding missing apostrophes:', 'completed');
+
         // Fix parentheses formatting - move parentheses outside of bold/italic tags
         console.log('Starting parentheses fixes...');
         
@@ -312,6 +433,10 @@
         
         console.log('After parentheses fixes:', fixedText.includes('(<b>') || fixedText.includes('(<i>') ? 'FOUND FIXED PARENTHESES' : 'NO PARENTHESES FIXES APPLIED');
 
+        // Detect and mark mismatched parentheses/brackets with warning emojis
+        console.log('Checking for mismatched parentheses/brackets...');
+        fixedText = highlightMismatchedBracketsWithEmojis(fixedText);
+
         console.log('Fixed text length:', fixedText.length);
         console.log('Changes made:', text !== fixedText);
 
@@ -367,6 +492,69 @@
             autoFixButton.style.color = '#000';
         }, 1000);
     }
+
+    // Function to detect and mark mismatched parentheses/brackets with warning emojis
+    function highlightMismatchedBracketsWithEmojis(text) {
+        console.log('Analyzing bracket matching...');
+        
+        // Track different types of brackets separately but allow nesting
+        const brackets = {
+            '(': { close: ')', stack: [], type: 'paren' },
+            '[': { close: ']', stack: [], type: 'bracket' }
+        };
+        
+        let result = text;
+        let mismatchedPositions = [];
+        
+        // First pass: find all bracket positions and track matching
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            
+            if (char === '(' || char === '[') {
+                brackets[char].stack.push(i);
+            } else if (char === ')' || char === ']') {
+                const openChar = char === ')' ? '(' : '[';
+                
+                if (brackets[openChar].stack.length > 0) {
+                    // Found a match, remove from stack
+                    brackets[openChar].stack.pop();
+                } else {
+                    // Unmatched closing bracket
+                    mismatchedPositions.push({ pos: i, char: char, type: 'unmatched_close' });
+                    console.log('Found unmatched closing bracket:', char, 'at position', i);
+                }
+            }
+        }
+        
+        // Add remaining unmatched opening brackets
+        Object.keys(brackets).forEach(openChar => {
+            brackets[openChar].stack.forEach(pos => {
+                mismatchedPositions.push({ pos: pos, char: openChar, type: 'unmatched_open' });
+                console.log('Found unmatched opening bracket:', openChar, 'at position', pos);
+            });
+        });
+        
+        // Sort positions in reverse order to maintain correct indices when inserting emojis
+        mismatchedPositions.sort((a, b) => b.pos - a.pos);
+        
+        // Mark mismatched brackets with warning emojis
+        mismatchedPositions.forEach(({ pos, char }) => {
+            const before = result.slice(0, pos);
+            const after = result.slice(pos + 1);
+            const markedChar = `⚠️${char}⚠️`;
+            result = before + markedChar + after;
+        });
+        
+        if (mismatchedPositions.length > 0) {
+            console.log('Marked', mismatchedPositions.length, 'mismatched brackets with warning emojis');
+        } else {
+            console.log('No mismatched brackets found');
+        }
+        
+        return result;
+    }
+
+
 
     // Function to update button appearance based on state
     function updateButtonState() {
