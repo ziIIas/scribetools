@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      2.0
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -17,10 +17,32 @@
     let emDashEnabled = false;
     let toggleButton = null;
     let autoFixButton = null;
+    let settingsPopup = null;
+    let settingsBackdrop = null;
     let isInitialized = false;
     let formatPopup = null;
     let currentSelection = null;
     let popupTimeout = null;
+
+    // Auto-save variables
+    let autoSaveInterval = null;
+    let lastSavedContent = '';
+    let isEditing = false;
+    let hasShownRestorePrompt = false; // Only show restore prompt once per page load
+
+    // Auto fix settings - default all enabled
+    let autoFixSettings = {
+        contractions: true,
+        capitalizeI: true,
+        wordFixes: true,
+        apostrophes: true,
+        parenthesesFormatting: true,
+        bracketHighlighting: true,
+        emDashFixes: true,
+        capitalizeParentheses: true,
+        customRegex: true,
+        customRegexRules: [] // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
+    };
 
     // Function to create the toggle button
     function createToggleButton() {
@@ -70,6 +92,1050 @@
         });
 
         return button;
+    }
+
+
+
+    // Function to create the settings popup
+    function createSettingsPopup() {
+        // Create backdrop
+        const backdrop = document.createElement('div');
+        backdrop.id = 'genius-settings-backdrop';
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            z-index: 10001;
+            backdrop-filter: blur(2px);
+        `;
+
+                 const popup = document.createElement('div');
+        popup.id = 'genius-settings-popup';
+        popup.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            padding: 24px;
+            display: none;
+            z-index: 10002;
+            font-family: 'Programme', Arial, sans-serif;
+            min-width: 350px;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        `;
+
+        // Create header with title and close button
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        `;
+
+                 const title = document.createElement('h3');
+        title.textContent = 'Auto Fix Settings';
+        title.style.cssText = `
+            margin: 0;
+            font-size: 18px;
+            font-weight: 400;
+            color: #333;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const closeButton = document.createElement('button');
+        closeButton.innerHTML = '×';
+        closeButton.title = 'Close Settings';
+        closeButton.style.cssText = `
+            background: none;
+            border: none;
+            font-size: 24px;
+            font-weight: 300;
+            color: #666;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        `;
+
+        closeButton.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = '#f5f5f5';
+            this.style.color = '#333';
+        });
+
+        closeButton.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = 'transparent';
+            this.style.color = '#666';
+        });
+
+        closeButton.addEventListener('click', function() {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+
+        header.appendChild(title);
+        header.appendChild(closeButton);
+        popup.appendChild(header);
+
+        // Create tabbed interface
+        const tabContainer = createTabbedInterface();
+        popup.appendChild(tabContainer);
+
+        // Add backdrop click handler to close
+        backdrop.addEventListener('click', function() {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(popup);
+
+        return { backdrop, popup };
+    }
+
+    // Function to create tabbed interface
+    function createTabbedInterface() {
+        const container = document.createElement('div');
+        container.style.cssText = `
+            width: 100%;
+        `;
+
+        // Tab headers
+        const tabHeaders = document.createElement('div');
+        tabHeaders.style.cssText = `
+            display: flex;
+            border-bottom: 1px solid #dee2e6;
+            margin-bottom: 20px;
+        `;
+
+        // Default Settings tab
+        const defaultTab = document.createElement('button');
+        defaultTab.textContent = 'Default Settings';
+        defaultTab.id = 'default-settings-tab';
+        defaultTab.style.cssText = `
+            background: none;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #007bff;
+            border-bottom: 2px solid #007bff;
+            transition: all 0.2s ease;
+        `;
+
+        // Custom Rules tab
+        const customTab = document.createElement('button');
+        customTab.textContent = 'Custom Rules';
+        customTab.id = 'custom-rules-tab';
+        customTab.style.cssText = `
+            background: none;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #6c757d;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        `;
+
+        tabHeaders.appendChild(defaultTab);
+        tabHeaders.appendChild(customTab);
+        container.appendChild(tabHeaders);
+
+        // Tab content container
+        const tabContent = document.createElement('div');
+        tabContent.id = 'tab-content';
+        container.appendChild(tabContent);
+
+        // Default settings content
+        const defaultContent = createDefaultSettingsContent();
+        defaultContent.id = 'default-settings-content';
+        defaultContent.style.display = 'block';
+        tabContent.appendChild(defaultContent);
+
+        // Custom rules content
+        const customContent = createCustomRulesContent();
+        customContent.id = 'custom-rules-content';
+        customContent.style.display = 'none';
+        tabContent.appendChild(customContent);
+
+        // Tab switching logic
+        defaultTab.addEventListener('click', () => switchTab('default'));
+        customTab.addEventListener('click', () => switchTab('custom'));
+
+        function switchTab(tabName) {
+            const defaultTabEl = document.getElementById('default-settings-tab');
+            const customTabEl = document.getElementById('custom-rules-tab');
+            const defaultContentEl = document.getElementById('default-settings-content');
+            const customContentEl = document.getElementById('custom-rules-content');
+
+            if (tabName === 'default') {
+                // Update tab styles
+                defaultTabEl.style.color = '#007bff';
+                defaultTabEl.style.borderBottomColor = '#007bff';
+                customTabEl.style.color = '#6c757d';
+                customTabEl.style.borderBottomColor = 'transparent';
+                
+                // Show/hide content
+                defaultContentEl.style.display = 'block';
+                customContentEl.style.display = 'none';
+            } else {
+                // Update tab styles
+                defaultTabEl.style.color = '#6c757d';
+                defaultTabEl.style.borderBottomColor = 'transparent';
+                customTabEl.style.color = '#007bff';
+                customTabEl.style.borderBottomColor = '#007bff';
+                
+                // Show/hide content
+                defaultContentEl.style.display = 'none';
+                customContentEl.style.display = 'block';
+            }
+        }
+
+        return container;
+    }
+
+    // Function to create default settings content
+    function createDefaultSettingsContent() {
+        const content = document.createElement('div');
+
+        const settings = [
+            { key: 'contractions', label: 'Fix contractions (don\'t, can\'t, etc.)' },
+            { key: 'capitalizeI', label: 'Capitalize standalone "i"' },
+            { key: 'wordFixes', label: 'Word fixes (ok→okay, yea→yeah, etc.)' },
+            { key: 'apostrophes', label: 'Add missing apostrophes (gon\'→gon\', \'til, etc.)' },
+            { key: 'parenthesesFormatting', label: 'Fix parentheses formatting' },
+            { key: 'bracketHighlighting', label: 'Highlight mismatched brackets' },
+            { key: 'emDashFixes', label: 'Convert word- to word—' },
+            { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses' },
+            { key: 'customRegex', label: 'Enable custom regex rules' }
+        ];
+
+        settings.forEach(setting => {
+            const container = document.createElement('div');
+            container.style.cssText = `
+                display: flex;
+                align-items: flex-start;
+                margin-bottom: 12px;
+                padding: 8px;
+                border-radius: 6px;
+                transition: background-color 0.2s ease;
+            `;
+
+            container.addEventListener('mouseenter', function() {
+                this.style.backgroundColor = '#f8f9fa';
+            });
+
+            container.addEventListener('mouseleave', function() {
+                this.style.backgroundColor = 'transparent';
+            });
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `setting-${setting.key}`;
+            checkbox.checked = autoFixSettings[setting.key];
+            checkbox.style.cssText = `
+                margin-right: 12px;
+                margin-top: 2px;
+                cursor: pointer;
+                width: 16px;
+                height: 16px;
+            `;
+
+            checkbox.addEventListener('change', function() {
+                autoFixSettings[setting.key] = this.checked;
+                saveSettings();
+            });
+
+                         const label = document.createElement('label');
+            label.htmlFor = `setting-${setting.key}`;
+            label.textContent = setting.label;
+            label.style.cssText = `
+                font-size: 14px;
+                cursor: pointer;
+                color: #444;
+                line-height: 1.4;
+                flex: 1;
+                font-weight: 100;
+                font-family: 'Programme', Arial, sans-serif;
+            `;
+
+            container.appendChild(checkbox);
+            container.appendChild(label);
+            content.appendChild(container);
+        });
+
+        return content;
+    }
+
+    // Function to create custom rules content
+    function createCustomRulesContent() {
+        const content = document.createElement('div');
+
+                 // All buttons on same line
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        `;
+
+        const addRuleBtn = createSmallButton('+ Add Rule', () => {
+            const form = document.getElementById('add-rule-form');
+            const isVisible = form.style.display !== 'none';
+            form.style.display = isVisible ? 'none' : 'block';
+            addRuleBtn.textContent = isVisible ? '+ Add Rule' : 'Cancel';
+        });
+        
+        const importBtn = createSmallButton('Import Rules', importRegexRules);
+        const exportBtn = createSmallButton('Export Rules', exportRegexRules);
+
+        buttonContainer.appendChild(addRuleBtn);
+        buttonContainer.appendChild(importBtn);
+        buttonContainer.appendChild(exportBtn);
+        content.appendChild(buttonContainer);
+
+        // Add rule form (initially hidden)
+        const addRuleForm = createAddRuleForm();
+        content.appendChild(addRuleForm);
+
+        // Rules container
+        const rulesContainer = document.createElement('div');
+        rulesContainer.id = 'custom-regex-rules-container';
+        content.appendChild(rulesContainer);
+
+        // Load existing rules
+        refreshCustomRegexRules(rulesContainer);
+
+        return content;
+    }
+
+    // Function to create inline add rule form
+    function createAddRuleForm() {
+        const form = document.createElement('div');
+        form.id = 'add-rule-form';
+        form.style.cssText = `
+            display: none;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        `;
+
+                 const title = document.createElement('h5');
+        title.textContent = 'Add New Regex Rule';
+        title.style.cssText = `
+            margin: 0 0 16px 0;
+            font-size: 16px;
+            font-weight: 400;
+            color: #333;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+        form.appendChild(title);
+
+        // Form fields
+        const fieldsContainer = document.createElement('div');
+        fieldsContainer.style.cssText = `display: flex; flex-direction: column; gap: 16px; margin-bottom: 16px;`;
+
+        const descriptionField = createFormField('Description', 'text', '');
+        const findField = createFormField('Find Pattern (regex)', 'text', '');
+        const replaceField = createFormField('Replace With', 'text', '');
+        const flagsField = createFormField('Flags (optional)', 'text', 'gi');
+
+        fieldsContainer.appendChild(descriptionField);
+        fieldsContainer.appendChild(findField);
+        fieldsContainer.appendChild(replaceField);
+        fieldsContainer.appendChild(flagsField);
+        form.appendChild(fieldsContainer);
+
+        // Buttons
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 8px;
+        `;
+
+                 const saveBtn = createSmallButton('Add Rule', () => {
+            const description = descriptionField.querySelector('input').value;
+            const find = findField.querySelector('input').value;
+            const replace = replaceField.querySelector('input').value;
+            const flags = flagsField.querySelector('input').value || 'gi';
+
+            if (!description || !find) {
+                alert('Description and Find Pattern are required.');
+                return;
+            }
+
+            try {
+                // Test the regex
+                new RegExp(find, flags);
+            } catch (e) {
+                alert('Invalid regex pattern: ' + e.message);
+                return;
+            }
+
+            const newRule = { description, find, replace, flags, enabled: true };
+            autoFixSettings.customRegexRules.push(newRule);
+            saveSettings();
+            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+            
+            // Clear form and hide it
+            descriptionField.querySelector('input').value = '';
+            findField.querySelector('input').value = '';
+            replaceField.querySelector('input').value = '';
+            flagsField.querySelector('input').value = 'gi';
+            form.style.display = 'none';
+            
+                         // Reset button text - find the correct add rule button
+            const addRuleButton = form.parentElement.querySelector('button');
+            if (addRuleButton && addRuleButton.textContent === 'Cancel') {
+                addRuleButton.textContent = '+ Add Rule';
+            }
+        });
+
+        saveBtn.style.backgroundColor = '#007bff';
+        saveBtn.style.color = 'white';
+        saveBtn.style.borderColor = '#007bff';
+
+        buttonContainer.appendChild(saveBtn);
+        form.appendChild(buttonContainer);
+
+        return form;
+    }
+
+
+
+    // Function to create small buttons
+    function createSmallButton(text, clickHandler) {
+                 const button = document.createElement('button');
+        button.textContent = text;
+        button.style.cssText = `
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        button.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = '#e9ecef';
+            this.style.borderColor = '#adb5bd';
+        });
+
+        button.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = '#f8f9fa';
+            this.style.borderColor = '#dee2e6';
+        });
+
+        button.addEventListener('click', clickHandler);
+        return button;
+    }
+
+    // Function to refresh the custom regex rules display
+    function refreshCustomRegexRules(container) {
+        container.innerHTML = '';
+        
+        if (!autoFixSettings.customRegexRules || autoFixSettings.customRegexRules.length === 0) {
+                         const noRulesMsg = document.createElement('div');
+            noRulesMsg.textContent = 'No custom regex rules yet. Click "Add Rule" to create one.';
+            noRulesMsg.style.cssText = `
+                color: #6c757d;
+                font-style: italic;
+                padding: 12px;
+                text-align: center;
+                font-weight: 100;
+                font-family: 'Programme', Arial, sans-serif;
+            `;
+            container.appendChild(noRulesMsg);
+            return;
+        }
+
+        autoFixSettings.customRegexRules.forEach((rule, index) => {
+            const ruleElement = createRegexRuleElement(rule, index);
+            container.appendChild(ruleElement);
+        });
+    }
+
+    // Function to create a regex rule element
+    function createRegexRuleElement(rule, index) {
+        const ruleDiv = document.createElement('div');
+        ruleDiv.style.cssText = `
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        `;
+
+        const enabledCheckbox = document.createElement('input');
+        enabledCheckbox.type = 'checkbox';
+        enabledCheckbox.checked = rule.enabled !== false; // Default to enabled
+        enabledCheckbox.addEventListener('change', function() {
+            autoFixSettings.customRegexRules[index].enabled = this.checked;
+            saveSettings();
+        });
+
+                 const description = document.createElement('span');
+        description.textContent = rule.description || `Rule ${index + 1}`;
+        description.style.cssText = `
+            font-weight: 400;
+            margin-left: 8px;
+            flex: 1;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const deleteBtn = createSmallButton('Delete', () => {
+            autoFixSettings.customRegexRules.splice(index, 1);
+            saveSettings();
+            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+        });
+
+        header.appendChild(enabledCheckbox);
+        header.appendChild(description);
+        header.appendChild(deleteBtn);
+        ruleDiv.appendChild(header);
+
+        // Rule details
+        const details = document.createElement('div');
+        details.style.cssText = `
+            font-size: 12px;
+            color: #6c757d;
+            font-family: monospace;
+        `;
+        details.innerHTML = `
+            <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
+            <div><strong>Replace:</strong> ${rule.replace}</div>
+        `;
+        ruleDiv.appendChild(details);
+
+        return ruleDiv;
+    }
+
+
+
+         // Function to create form fields
+    function createFormField(label, type, value = '') {
+        const container = document.createElement('div');
+        container.style.cssText = `display: flex; flex-direction: column; gap: 4px;`;
+
+                 const labelEl = document.createElement('label');
+        labelEl.textContent = label;
+        labelEl.style.cssText = `
+            font-weight: 400; 
+            color: #333;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const input = document.createElement('input');
+        input.type = type;
+        input.value = value;
+                 input.style.cssText = `
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            font-weight: 100;
+            font-family: ${type === 'text' && (label.includes('Pattern') || label.includes('Replace')) ? 'monospace, \'Programme\', Arial, sans-serif' : '\'Programme\', Arial, sans-serif'};
+        `;
+
+        container.appendChild(labelEl);
+        container.appendChild(input);
+        return container;
+    }
+
+    // Function to import regex rules
+    function importRegexRules() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    let importedRules;
+                    
+                    // Handle both single rule objects and arrays of rules
+                    if (Array.isArray(importedData)) {
+                        importedRules = importedData;
+                    } else if (importedData && typeof importedData === 'object' && importedData.find && importedData.replace) {
+                        // Single rule object
+                        importedRules = [importedData];
+                    } else {
+                        alert('Invalid file format. Please select a valid JSON file containing regex rules.');
+                        return;
+                    }
+                    
+                    // Validate each rule has required fields
+                    const validRules = importedRules.filter(rule => 
+                        rule && typeof rule === 'object' && rule.find && rule.replace
+                    );
+                    
+                    if (validRules.length === 0) {
+                        alert('No valid regex rules found in the file.');
+                        return;
+                    }
+                    
+                    // Add to existing rules instead of replacing
+                    autoFixSettings.customRegexRules = [...(autoFixSettings.customRegexRules || []), ...validRules];
+                    saveSettings();
+                    refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+                    alert(`Successfully imported ${validRules.length} regex rule(s).`);
+                } catch (error) {
+                    alert('Error reading file: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+        input.click();
+    }
+
+    // Function to export regex rules
+    function exportRegexRules() {
+        if (!autoFixSettings.customRegexRules || autoFixSettings.customRegexRules.length === 0) {
+            alert('No custom regex rules to export.');
+            return;
+        }
+
+        const dataStr = JSON.stringify(autoFixSettings.customRegexRules, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'genius-custom-regex-rules.json';
+        link.click();
+        
+        URL.revokeObjectURL(url);
+    }
+
+    // Function to toggle settings popup
+    function toggleSettingsPopup() {
+        if (!settingsPopup) {
+            const popupElements = createSettingsPopup();
+            settingsBackdrop = popupElements.backdrop;
+            settingsPopup = popupElements.popup;
+        }
+
+        if (settingsPopup.style.display === 'none' || !settingsPopup.style.display) {
+            settingsBackdrop.style.display = 'block';
+            settingsPopup.style.display = 'block';
+        } else {
+            settingsBackdrop.style.display = 'none';
+            settingsPopup.style.display = 'none';
+        }
+    }
+
+    // Function to save settings to localStorage
+    function saveSettings() {
+        try {
+            localStorage.setItem('genius-autofix-settings', JSON.stringify(autoFixSettings));
+        } catch (e) {
+            console.log('Failed to save settings:', e);
+        }
+    }
+
+    // Function to load settings from localStorage
+    function loadSettings() {
+        try {
+            const saved = localStorage.getItem('genius-autofix-settings');
+            if (saved) {
+                const loadedSettings = JSON.parse(saved);
+                autoFixSettings = { ...autoFixSettings, ...loadedSettings };
+            }
+        } catch (e) {
+            console.log('Failed to load settings:', e);
+        }
+    }
+
+    // Auto-save functions
+    function getAutoSaveKey() {
+        // Use the current page URL as the key, but normalize it
+        const url = window.location.href;
+        const baseUrl = url.split('?')[0].split('#')[0]; // Remove query params and hash
+        return `genius-autosave-${baseUrl}`;
+    }
+
+    function saveCurrentContent() {
+        if (!isEditing) return;
+
+        const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
+                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+                          document.querySelector('textarea') ||
+                          document.querySelector('[contenteditable="true"]');
+
+        if (!textEditor) return;
+
+        let content;
+        let selectionStart = null;
+        let selectionEnd = null;
+
+        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            content = textEditor.value;
+            selectionStart = textEditor.selectionStart;
+            selectionEnd = textEditor.selectionEnd;
+        } else if (textEditor.isContentEditable) {
+            content = textEditor.innerText || textEditor.textContent;
+        }
+
+        if (!content || content === lastSavedContent) return;
+
+        const saveData = {
+            content: content,
+            timestamp: Date.now(),
+            url: window.location.href,
+            selectionStart: selectionStart,
+            selectionEnd: selectionEnd
+        };
+
+        try {
+            localStorage.setItem(getAutoSaveKey(), JSON.stringify(saveData));
+            lastSavedContent = content;
+            console.log('Auto-saved content:', content.length, 'characters');
+        } catch (e) {
+            console.log('Failed to auto-save:', e);
+        }
+    }
+
+    function clearAutoSave() {
+        try {
+            localStorage.removeItem(getAutoSaveKey());
+            lastSavedContent = '';
+            console.log('Auto-save cleared');
+        } catch (e) {
+            console.log('Failed to clear auto-save:', e);
+        }
+    }
+
+
+
+         function showRestoreNotification(saveData, timeString) {
+        // Create notification overlay
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10003;
+            backdrop-filter: blur(2px);
+        `;
+
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            max-width: 550px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            text-align: center;
+            min-width: 400px;
+        `;
+
+        const title = document.createElement('h3');
+        title.textContent = '💾 Restore Previous Work?';
+        title.style.cssText = `
+            margin: 0 0 20px 0;
+            color: #333;
+            font-size: 24px;
+            font-weight: 400;
+            font-family: 'Programme', Arial, sans-serif;
+            line-height: 1.125;
+        `;
+
+        const message = document.createElement('p');
+        message.innerHTML = `We found unsaved work from <strong>${timeString}</strong>.<br>Would you like to restore it?`;
+        message.style.cssText = `
+            margin: 0 0 24px 0;
+            color: #666;
+            line-height: 1.5;
+            font-size: 16px;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const preview = document.createElement('div');
+        preview.style.cssText = `
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 20px 0;
+            max-height: 120px;
+            overflow-y: auto;
+            text-align: left;
+            font-size: 14px;
+            color: #495057;
+            font-family: 'Programme', Arial, sans-serif;
+            font-weight: 100;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        `;
+        preview.textContent = saveData.content.substring(0, 300) + (saveData.content.length > 300 ? '...' : '');
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 24px;
+        `;
+
+        const restoreBtn = document.createElement('button');
+        restoreBtn.textContent = 'Restore Work';
+        restoreBtn.style.cssText = `
+            background-color: #000;
+            color: #fff;
+            border: 1px solid #000;
+            border-radius: 20px;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            font-size: 16px;
+            font-weight: 400;
+            line-height: 1.1;
+            min-width: 140px;
+            transition: all 0.2s ease;
+        `;
+
+        const discardBtn = document.createElement('button');
+        discardBtn.textContent = 'Start Fresh';
+        discardBtn.style.cssText = `
+            background-color: transparent;
+            color: #000;
+            border: 1px solid #000;
+            border-radius: 20px;
+            padding: 12px 24px;
+            cursor: pointer;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            font-size: 16px;
+            font-weight: 400;
+            line-height: 1.1;
+            min-width: 140px;
+            transition: all 0.2s ease;
+        `;
+
+        // Add hover effects matching Genius button style
+        restoreBtn.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = '#333';
+        });
+
+        restoreBtn.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = '#000';
+        });
+
+        discardBtn.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = '#000';
+            this.style.color = '#fff';
+        });
+
+        discardBtn.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = 'transparent';
+            this.style.color = '#000';
+        });
+
+        restoreBtn.addEventListener('click', () => {
+            restoreContent(saveData);
+            document.body.removeChild(overlay);
+        });
+
+        discardBtn.addEventListener('click', () => {
+            clearAutoSave();
+            hasShownRestorePrompt = true; // Mark as handled
+            document.body.removeChild(overlay);
+        });
+
+        buttonContainer.appendChild(restoreBtn);
+        buttonContainer.appendChild(discardBtn);
+
+        notification.appendChild(title);
+        notification.appendChild(message);
+        notification.appendChild(preview);
+        notification.appendChild(buttonContainer);
+        overlay.appendChild(notification);
+
+        document.body.appendChild(overlay);
+    }
+
+    function restoreContent(saveData) {
+        // Look for the lyrics editor specifically
+        let textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
+                        document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+
+        console.log('Looking for lyrics editor...', {
+            found: !!textEditor,
+            editorType: textEditor?.tagName,
+            editorClass: textEditor?.className,
+            editorId: textEditor?.id
+        });
+
+        if (textEditor) {
+            // Editor found, restore immediately
+            performRestore(textEditor, saveData);
+        } else {
+            console.log('No lyrics editor found');
+            alert('Could not find the lyrics editor. Please ensure you are in editing mode.');
+        }
+    }
+
+    function performRestore(textEditor, saveData) {
+        console.log('performRestore called with:', {
+            editorType: textEditor.tagName,
+            editorId: textEditor.id,
+            editorClass: textEditor.className,
+            contentLength: saveData.content.length,
+            contentPreview: saveData.content.substring(0, 50) + '...'
+        });
+
+        try {
+            if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+                console.log('Restoring to textarea/input, current value length:', textEditor.value.length);
+                
+                // Focus the element
+                textEditor.focus();
+                
+                // Use a more direct approach that works better with React
+                // Set the value directly and trigger all necessary events
+                textEditor.value = saveData.content;
+                
+                // Trigger React-compatible events in sequence
+                const events = ['input', 'change', 'blur', 'focus'];
+                events.forEach(eventType => {
+                    const event = new Event(eventType, { bubbles: true });
+                    // Make the event look more like a real user event
+                    Object.defineProperty(event, 'target', { value: textEditor, enumerable: true });
+                    Object.defineProperty(event, 'currentTarget', { value: textEditor, enumerable: true });
+                    textEditor.dispatchEvent(event);
+                });
+                
+                // Set cursor position if available
+                if (saveData.selectionStart !== null && saveData.selectionEnd !== null) {
+                    textEditor.selectionStart = saveData.selectionStart;
+                    textEditor.selectionEnd = saveData.selectionEnd;
+                }
+                
+                console.log('Content restored directly to textarea');
+                
+            } else if (textEditor.isContentEditable) {
+                console.log('Restoring to contenteditable, current length:', textEditor.textContent.length);
+                
+                textEditor.focus();
+                textEditor.textContent = saveData.content;
+                
+                // Dispatch events
+                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+                textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+                textEditor.dispatchEvent(new Event('keyup', { bubbles: true }));
+            }
+
+            lastSavedContent = saveData.content;
+            hasShownRestorePrompt = true; // Mark as handled
+            console.log('Content restoration completed');
+            
+        } catch (error) {
+            console.error('Error during content restoration:', error);
+        }
+        
+        // Clear pending restore data
+        if (window.pendingRestoreData) {
+            delete window.pendingRestoreData;
+        }
+    }
+
+
+
+    function startAutoSave() {
+        if (autoSaveInterval) return;
+
+        // Save every 30 seconds
+        autoSaveInterval = setInterval(saveCurrentContent, 30000);
+        
+                 // Also save on text input
+        document.addEventListener('input', (e) => {
+            const target = e.target;
+            // Make sure we're specifically in the lyrics editor, not a comment box
+            const isInLyricsEditor = target.closest('[class*="LyricsEdit"]') && 
+                                   (target.matches('textarea') || target.isContentEditable);
+
+            if (isInLyricsEditor) {
+                isEditing = true;
+                
+                // Debounced save - save 2 seconds after last input
+                clearTimeout(window.autoSaveInputTimeout);
+                window.autoSaveInputTimeout = setTimeout(saveCurrentContent, 2000);
+            }
+        });
+
+                 // Listen for save/publish button clicks to clear auto-save
+        document.addEventListener('click', (e) => {
+            const button = e.target.closest('button');
+            if (button) {
+                const buttonText = button.textContent.toLowerCase();
+                // Clear auto-save when user successfully saves/publishes
+                if (buttonText.includes('save') || buttonText.includes('publish') || 
+                    buttonText.includes('submit') || buttonText.includes('update')) {
+                    setTimeout(() => {
+                        // Clear auto-save after a short delay to ensure save was successful
+                        clearAutoSave();
+                        isEditing = false;
+                    }, 2000);
+                }
+            }
+        });
+
+
+
+        console.log('Auto-save started');
+    }
+
+    function stopAutoSave() {
+        if (autoSaveInterval) {
+            clearInterval(autoSaveInterval);
+            autoSaveInterval = null;
+        }
+        isEditing = false;
+        console.log('Auto-save stopped');
     }
 
     // Function to create the zero-width space button
@@ -185,11 +1251,18 @@
         document.body.removeChild(textArea);
     }
 
-    // Function to create the auto fix button
+    // Function to create the combined auto fix + settings button
     function createAutoFixButton() {
         const button = document.createElement('button');
-        button.innerHTML = 'Auto Fix';
-        button.title = 'Auto-fix capitalization, contractions, parentheses formatting, bracket matching, and common errors (i → I, ima/imma → I\'ma, dont → don\'t, ok → okay, yea → yeah, sumn → somethin\', gon → gon\', yall → y\'all, til → \'til, <i>(text)</i> → (<i>text</i>), highlights mismatched () and [], etc.)';
+        button.innerHTML = `
+            <span class="autofix-text" style="margin-right: 0.5rem;">Auto Fix</span>
+            <span class="settings-icon" style="opacity: 0.7; transition: opacity 0.2s;">
+                <svg class="svg-icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M512 661.994667q61.994667 0 106.005333-44.010667t44.010667-106.005333-44.010667-106.005333-106.005333-44.010667-106.005333 44.010667-44.010667 106.005333 44.010667 106.005333 106.005333 44.010667zM829.994667 554.005333l90.005333 69.994667q13.994667 10.005333 4.010667 28.010667l-85.994667 148.010667q-8 13.994667-26.005333 8l-106.005333-42.005333q-42.005333 29.994667-72 42.005333l-16 112q-4.010667 18.005333-20.010667 18.005333l-172.010667 0q-16 0-20.010667-18.005333l-16-112q-37.994667-16-72-42.005333l-106.005333 42.005333q-18.005333 5.994667-26.005333-8l-85.994667-148.010667q-10.005333-18.005333 4.010667-28.010667l90.005333-69.994667q-2.005333-13.994667-2.005333-42.005333t2.005333-42.005333l-90.005333-69.994667q-13.994667-10.005333-4.010667-28.010667l85.994667-148.010667q8-13.994667 26.005333-8l106.005333 42.005333q42.005333-29.994667 72-42.005333l16-112q4.010667-18.005333 20.010667-18.005333l172.010667 0q16 0 20.010667 18.005333l16 112q37.994667 16 72 42.005333l106.005333-42.005333q18.005333-5.994667 26.005333 8l85.994667 148.010667q10.005333 18.005333-4.010667 28.010667l-90.005333 69.994667q2.005333 13.994667 2.005333 42.005333t-2.005333 42.005333z" />
+                </svg>
+            </span>
+        `;
+        button.title = 'Auto-fix capitalization, contractions, parentheses formatting, bracket matching, and common errors. Click gear icon for settings.';
         button.id = 'genius-autofix-button';
         
         // Style to match Genius buttons
@@ -210,7 +1283,8 @@
             border-radius: 1.25rem;
             cursor: pointer;
             min-width: auto;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             position: relative;
         `;
 
@@ -218,18 +1292,39 @@
         button.addEventListener('mouseenter', function() {
             button.style.backgroundColor = '#000';
             button.style.color = '#fff';
+            // Make settings icon more visible on hover
+            const settingsIcon = button.querySelector('.settings-icon');
+            if (settingsIcon) settingsIcon.style.opacity = '1';
         });
 
         button.addEventListener('mouseleave', function() {
             button.style.backgroundColor = 'transparent';
             button.style.color = '#000';
+            // Reset settings icon opacity
+            const settingsIcon = button.querySelector('.settings-icon');
+            if (settingsIcon) settingsIcon.style.opacity = '0.7';
         });
 
-        // Auto fix functionality
+        // Combined click functionality
         button.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            performAutoFix();
+            
+            // Get button bounds and click position
+            const buttonRect = button.getBoundingClientRect();
+            const clickX = e.clientX;
+            
+            // Create a generous buffer zone - if click is in the right 35% of button, treat as settings
+            const buttonWidth = buttonRect.width;
+            const settingsZoneStart = buttonRect.left + (buttonWidth * 0.65); // Right 35% of button
+            
+            // If click is in the settings zone (right 35% with buffer), open settings
+            if (clickX >= settingsZoneStart) {
+                toggleSettingsPopup();
+            } else {
+                // Otherwise, perform auto fix
+                performAutoFix();
+            }
         });
 
         return button;
@@ -268,18 +1363,21 @@
         console.log('Before fixes:', fixedText.substring(0, 100) + '...');
 
         // Fix "ima", "imma" and "i'mma" to "I'ma" (case insensitive)
-        fixedText = fixedText.replace(/\b(i'mma|imma|ima)\b/gi, "I'ma");
-        console.log('After ima fixes:', fixedText !== text ? 'CHANGED' : 'NO CHANGE');
+        if (autoFixSettings.capitalizeI) {
+            fixedText = fixedText.replace(/\b(i'mma|imma|ima)\b/gi, "I'ma");
+            console.log('After ima fixes:', fixedText !== text ? 'CHANGED' : 'NO CHANGE');
 
-        // Fix standalone "i" to "I" when followed by space, dash, punctuation, or end of string
-        fixedText = fixedText.replace(/\bi(?=[\s\-\.,!?;:\)\]\}'""]|$)/g, "I");
-        console.log('After i fixes:', fixedText.includes(' I ') ? 'FOUND I' : 'NO I FOUND');
+            // Fix standalone "i" to "I" when followed by space, dash, punctuation, or end of string
+            fixedText = fixedText.replace(/\bi(?=[\s\-\.,!?;:\)\]\}'""]|$)/g, "I");
+            console.log('After i fixes:', fixedText.includes(' I ') ? 'FOUND I' : 'NO I FOUND');
 
-        // Fix "i'" contractions to "I'" (i'm, i'll, i've, i'd, etc.)
-        fixedText = fixedText.replace(/\bi'/g, "I'");
+            // Fix "i'" contractions to "I'" (i'm, i'll, i've, i'd, etc.)
+            fixedText = fixedText.replace(/\bi'/g, "I'");
+        }
 
         // Auto apostrophe fixes for common contractions
-        console.log('Starting apostrophe fixes...');
+        if (autoFixSettings.contractions) {
+            console.log('Starting apostrophe fixes...');
         
         // Basic contractions (most common ones)
         fixedText = fixedText.replace(/\bdont\b/gi, "don't");
@@ -332,10 +1430,12 @@
         // Special case: "im" to "I'm" 
         fixedText = fixedText.replace(/\bim\b(?=\s)/gi, "I'm");
         
-        console.log('After apostrophe fixes:', fixedText.includes("don't") ? 'FOUND APOSTROPHES' : 'NO APOSTROPHES FOUND');
+            console.log('After apostrophe fixes:', fixedText.includes("don't") ? 'FOUND APOSTROPHES' : 'NO APOSTROPHES FOUND');
+        }
 
         // Additional word fixes
-        console.log('Starting additional word fixes...');
+        if (autoFixSettings.wordFixes) {
+            console.log('Starting additional word fixes...');
         
         // Fix "ok" to "okay" but preserve specific producer tag phrases
         console.log('Processing ok → okay with whitelist...');
@@ -395,9 +1495,89 @@
             return 'yeah';
         });
         
-        // Fix words ending with dash to em dash (only at end of words, not hyphens)
-        // Pattern: word followed by dash at end of word boundary
-        fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, '$1—');
+        // Fix "aye" and "ay" to "ayy"
+        fixedText = fixedText.replace(/\b(aye|ay)\b/gi, function(match) {
+            if (match === 'AYE' || match === 'AY') return 'AYY';
+            if (match === 'Aye' || match === 'Ay') return 'Ayy';
+            return 'ayy';
+        });
+        
+        // Fix "hoe" to "ho"
+        fixedText = fixedText.replace(/\bhoe\b/gi, function(match) {
+            if (match === 'HOE') return 'HO';
+            if (match === 'Hoe') return 'Ho';
+            return 'ho';
+        });
+        
+        // Fix "skrt" to "skkrt"
+        fixedText = fixedText.replace(/\bskrt\b/gi, function(match) {
+            if (match === 'SKRT') return 'SKKRT';
+            if (match === 'Skrt') return 'Skkrt';
+            return 'skkrt';
+        });
+        
+        // Fix "lil" or "li'l" to "lil'"
+        fixedText = fixedText.replace(/\b(lil|li'l)\b/gi, function(match) {
+            if (match === 'LIL' || match === "LI'L") return "LIL'";
+            if (match === 'Lil' || match === "Li'l") return "Lil'";
+            return "lil'";
+        });
+        
+        // Fix "whoa" to "woah"
+        fixedText = fixedText.replace(/\bwhoa\b/gi, function(match) {
+            if (match === 'WHOA') return 'WOAH';
+            if (match === 'Whoa') return 'Woah';
+            return 'woah';
+        });
+        
+        // Fix "dawg" to "dog"
+        fixedText = fixedText.replace(/\bdawg\b/gi, function(match) {
+            if (match === 'DAWG') return 'DOG';
+            if (match === 'Dawg') return 'Dog';
+            return 'dog';
+        });
+        
+        // Fix "choppa" to "chopper"
+        fixedText = fixedText.replace(/\bchoppa\b/gi, function(match) {
+            if (match === 'CHOPPA') return 'CHOPPER';
+            if (match === 'Choppa') return 'Chopper';
+            return 'chopper';
+        });
+        
+        // Fix "oughtta" to "oughta"
+        fixedText = fixedText.replace(/\boughtta\b/gi, function(match) {
+            if (match === 'OUGHTTA') return 'OUGHTA';
+            if (match === 'Oughtta') return 'Oughta';
+            return 'oughta';
+        });
+        
+        // Fix "naïve" to "naive"
+        fixedText = fixedText.replace(/\bnaïve\b/gi, function(match) {
+            if (match === 'NAÏVE') return 'NAIVE';
+            if (match === 'Naïve') return 'Naive';
+            return 'naive';
+        });
+        
+        // Fix "all right" to "alright"
+        fixedText = fixedText.replace(/\ball right\b/gi, function(match) {
+            if (match === 'ALL RIGHT') return 'ALRIGHT';
+            if (match === 'All Right' || match === 'All right') return 'Alright';
+            return 'alright';
+        });
+        
+        // Fix "cliche" to "cliché"
+        fixedText = fixedText.replace(/\bcliche\b/gi, function(match) {
+            if (match === 'CLICHE') return 'CLICHÉ';
+            if (match === 'Cliche') return 'Cliché';
+            return 'cliché';
+        });
+        
+        // Fix "A.S.A.P." to "ASAP"
+        fixedText = fixedText.replace(/\bA\.S\.A\.P\./gi, 'ASAP');
+        
+        // Fix "V.I.P." and "V.I.P.s" to "VIP" and "VIPs"
+        fixedText = fixedText.replace(/\bV\.I\.P\.s\b/gi, 'VIPs');
+        fixedText = fixedText.replace(/\bV\.I\.P\./gi, 'VIP');
         
         // Add missing apostrophes to common contractions
         console.log('Adding missing apostrophes...');
@@ -453,10 +1633,12 @@
             return "'fore";
         });
         
-        console.log('After adding missing apostrophes:', 'completed');
+            console.log('After adding missing apostrophes:', 'completed');
+        }
 
         // Fix parentheses formatting - move parentheses outside of bold/italic tags
-        console.log('Starting parentheses fixes...');
+        if (autoFixSettings.parenthesesFormatting) {
+            console.log('Starting parentheses fixes...');
         
         // Handle nested formatting tags first (e.g., <i><b>(content)</b></i>)
         // This handles cases where we have nested tags with parentheses
@@ -566,11 +1748,49 @@
         // Pattern: <b>(content)</b> or <i>(content)</i> -> (<b>content</b>) or (<i>content</i>)
         fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, '(<$1>$2</$1>)');
         
-        console.log('After parentheses fixes:', fixedText.includes('(<b>') || fixedText.includes('(<i>') ? 'FOUND FIXED PARENTHESES' : 'NO PARENTHESES FIXES APPLIED');
+            console.log('After parentheses fixes:', fixedText.includes('(<b>') || fixedText.includes('(<i>') ? 'FOUND FIXED PARENTHESES' : 'NO PARENTHESES FIXES APPLIED');
+        }
 
         // Detect and mark mismatched parentheses/brackets with warning emojis
-        console.log('Checking for mismatched parentheses/brackets...');
-        fixedText = highlightMismatchedBracketsWithEmojis(fixedText);
+        if (autoFixSettings.bracketHighlighting) {
+            console.log('Checking for mismatched parentheses/brackets...');
+            fixedText = highlightMismatchedBracketsWithEmojis(fixedText);
+        }
+
+        // Fix words ending with dash to em dash (only at end of words, not hyphens)
+        if (autoFixSettings.emDashFixes) {
+            // Pattern: word followed by dash at end of word boundary
+            fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, '$1—');
+        }
+
+        // Capitalize first letter inside parentheses
+        if (autoFixSettings.capitalizeParentheses) {
+            console.log('Capitalizing first letter in parentheses...');
+            // Pattern: ( followed by optional whitespace and a lowercase letter
+            fixedText = fixedText.replace(/\(\s*([a-z])/g, function(match, firstChar) {
+                return match.replace(firstChar, firstChar.toUpperCase());
+            });
+        }
+
+        // Apply custom regex rules
+        if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
+            console.log('Applying custom regex rules...');
+            autoFixSettings.customRegexRules.forEach((rule, index) => {
+                if (rule.enabled !== false) {
+                    try {
+                        const regex = new RegExp(rule.find, rule.flags || 'gi');
+                        const beforeLength = fixedText.length;
+                        fixedText = fixedText.replace(regex, rule.replace);
+                        const afterLength = fixedText.length;
+                        if (beforeLength !== afterLength) {
+                            console.log(`Custom rule "${rule.description}" applied changes`);
+                        }
+                    } catch (e) {
+                        console.log(`Custom regex rule "${rule.description}" failed:`, e.message);
+                    }
+                }
+            });
+        }
 
         console.log('Fixed text length:', fixedText.length);
         console.log('Changes made:', text !== fixedText);
@@ -1104,7 +2324,7 @@
 
     // Function to check if we're on a lyrics page
     function isOnLyricsPage() {
-        return window.location.pathname.endsWith('-lyrics');
+        return window.location.pathname.endsWith('-lyrics') || window.location.pathname.endsWith('-annotated');
     }
 
     // Function to add buttons to lyrics editor
@@ -1198,15 +2418,66 @@
             return;
         }
 
-        // Add global event listeners (only once)
+        // Reset restore prompt flag for new page
+        hasShownRestorePrompt = false;
+
+                 // Add global event listeners (only once)
         document.addEventListener('keypress', handleKeyPress);
         document.addEventListener('selectionchange', handleTextSelection);
         document.addEventListener('mouseup', () => {
             // Add a small delay to allow selection to stabilize
             setTimeout(handleTextSelection, 10);
         });
+
+        // Listen for focus on lyrics editor to check for auto-saved content
+        document.addEventListener('focus', (e) => {
+            const target = e.target;
+            // Check if focusing on lyrics editor specifically
+            const isLyricsEditor = target.closest('[class*="LyricsEdit"]') && 
+                                  (target.matches('textarea') || target.isContentEditable);
+
+            if (isLyricsEditor && !hasShownRestorePrompt) {
+                hasShownRestorePrompt = true;
+                console.log('Lyrics editor focused (typing cursor active), checking for auto-saved content...');
+                
+                try {
+                    const saveData = localStorage.getItem(getAutoSaveKey());
+                    if (saveData) {
+                        const parsed = JSON.parse(saveData);
+                        const now = Date.now();
+                        const saveAge = now - parsed.timestamp;
+                        const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+
+                        // Only offer to restore if save is less than 24 hours old
+                        if (saveAge <= maxAge) {
+                            const saveDate = new Date(parsed.timestamp);
+                            const timeString = saveDate.toLocaleString();
+                            console.log('Found auto-saved content, showing restore notification...');
+                            
+                            // Show restore notification immediately since editor is ready
+                            showRestoreNotification(parsed, timeString);
+                        } else {
+                            clearAutoSave();
+                        }
+                    }
+                } catch (e) {
+                    console.log('Failed to check auto-save:', e);
+                }
+            }
+        }, true); // Use capture phase to catch focus events early
+
+        // Add beforeunload listener to save work before leaving
+        window.addEventListener('beforeunload', (e) => {
+            if (isEditing) {
+                saveCurrentContent();
+                // Optional: Show browser warning for unsaved changes
+                e.preventDefault();
+                e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+                return 'You have unsaved changes. Are you sure you want to leave?';
+            }
+        });
         document.addEventListener('click', (e) => {
-            // Only hide popup if clicking outside of it and not selecting text
+            // Only hide format popup if clicking outside of it and not selecting text
             if (formatPopup && !formatPopup.contains(e.target)) {
                 // Add a small delay to allow for text selection to complete
                 setTimeout(() => {
@@ -1218,9 +2489,24 @@
                     }
                 }, 50);
             }
+            
+            // Hide settings popup if clicking outside of it and not on the auto fix button
+            if (settingsPopup && autoFixButton && 
+                !settingsPopup.contains(e.target) && 
+                !autoFixButton.contains(e.target)) {
+                if (settingsBackdrop) settingsBackdrop.style.display = 'none';
+                settingsPopup.style.display = 'none';
+            }
         });
         
         console.log('Event listeners added for text formatting');
+        
+                 // Load saved settings
+        loadSettings();
+        
+        // Start auto-save functionality
+        startAutoSave();
+        
         isInitialized = true;
 
         // Try to add button to editor if it exists
