@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      2.1
+// @version      2.11
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -331,7 +331,7 @@
             { key: 'bracketHighlighting', label: 'Highlight mismatched brackets', type: 'checkbox' },
             { key: 'emDashFixes', label: 'Convert word- to word—', type: 'checkbox' },
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
-            { key: 'numberToText', label: 'Convert numbers to text (5→five, 100→one hundred)', type: 'dropdown', 
+            { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown', 
               options: [
                   { value: 'off', label: 'Off' },
                   { value: 'ask', label: 'Ask for each number' },
@@ -476,10 +476,15 @@
             addRuleBtn.textContent = isVisible ? '+ Add Rule' : 'Cancel';
         });
         
+        const searchBtn = createSmallButton('Search Rules', () => {
+            showRuleSearchPopup();
+        });
+        
         const importBtn = createSmallButton('Import Rules', importRegexRules);
         const exportBtn = createSmallButton('Export Rules', exportRegexRules);
 
         buttonContainer.appendChild(addRuleBtn);
+        buttonContainer.appendChild(searchBtn);
         buttonContainer.appendChild(importBtn);
         buttonContainer.appendChild(exportBtn);
         content.appendChild(buttonContainer);
@@ -597,11 +602,20 @@
 
     // Function to create small buttons
     function createSmallButton(text, clickHandler) {
-                 const button = document.createElement('button');
+        const button = document.createElement('button');
         button.textContent = text;
+        
+        // Store original styles
+        const originalBgColor = '#f8f9fa';
+        const originalBorderColor = '#dee2e6';
+        const originalTextColor = '#333';
+        const hoverBgColor = '#e9ecef';
+        const hoverBorderColor = '#adb5bd';
+        
         button.style.cssText = `
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
+            background: ${originalBgColor};
+            border: 1px solid ${originalBorderColor};
+            color: ${originalTextColor};
             border-radius: 4px;
             padding: 6px 12px;
             font-size: 12px;
@@ -612,13 +626,20 @@
         `;
 
         button.addEventListener('mouseenter', function() {
-            this.style.backgroundColor = '#e9ecef';
-            this.style.borderColor = '#adb5bd';
+            // Only apply hover styles if the button hasn't been customized
+            if (this.style.backgroundColor === originalBgColor || this.style.backgroundColor === 'rgb(248, 249, 250)') {
+                this.style.backgroundColor = hoverBgColor;
+                this.style.borderColor = hoverBorderColor;
+            }
         });
 
         button.addEventListener('mouseleave', function() {
-            this.style.backgroundColor = '#f8f9fa';
-            this.style.borderColor = '#dee2e6';
+            // Only reset to original if it was in hover state
+            if (this.style.backgroundColor === hoverBgColor || this.style.backgroundColor === 'rgb(233, 236, 239)') {
+                this.style.backgroundColor = originalBgColor;
+                this.style.borderColor = originalBorderColor;
+                this.style.color = originalTextColor;
+            }
         });
 
         button.addEventListener('click', clickHandler);
@@ -704,9 +725,10 @@
             color: #6c757d;
             font-family: monospace;
         `;
+        const replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace;
         details.innerHTML = `
             <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
-            <div><strong>Replace:</strong> ${rule.replace}</div>
+            <div><strong>Replace:</strong> ${replaceText}</div>
         `;
         ruleDiv.appendChild(details);
 
@@ -815,6 +837,227 @@
         URL.revokeObjectURL(url);
     }
 
+    // Function to show rule search popup
+    function showRuleSearchPopup() {
+        // Create backdrop
+        const backdrop = document.createElement('div');
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10004;
+            backdrop-filter: blur(2px);
+        `;
+
+        const popup = document.createElement('div');
+        popup.style.cssText = `
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            padding: 24px;
+            font-family: 'Programme', Arial, sans-serif;
+            min-width: 400px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        `;
+
+        // Header
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        `;
+
+        const title = document.createElement('h3');
+        title.textContent = 'Search Rules';
+        title.style.cssText = `
+            margin: 0;
+            font-size: 18px;
+            font-weight: 400;
+            color: #333;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const closeButton = document.createElement('button');
+        closeButton.innerHTML = '×';
+        closeButton.style.cssText = `
+            background: none;
+            border: none;
+            font-size: 24px;
+            font-weight: 300;
+            color: #666;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        `;
+
+        closeButton.addEventListener('click', () => {
+            document.body.removeChild(backdrop);
+        });
+
+        header.appendChild(title);
+        header.appendChild(closeButton);
+        popup.appendChild(header);
+
+        // Search input
+        const searchContainer = document.createElement('div');
+        searchContainer.style.cssText = `margin-bottom: 20px;`;
+
+        const searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.placeholder = 'Search rules by description, pattern, or replacement...';
+        searchInput.style.cssText = `
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: 'Programme', Arial, sans-serif;
+            box-sizing: border-box;
+        `;
+
+        searchContainer.appendChild(searchInput);
+        popup.appendChild(searchContainer);
+
+        // Results container
+        const resultsContainer = document.createElement('div');
+        resultsContainer.id = 'search-results-container';
+        popup.appendChild(resultsContainer);
+
+        // Search function
+        function performSearch() {
+            const query = searchInput.value.toLowerCase().trim();
+            resultsContainer.innerHTML = '';
+
+            if (!query) {
+                resultsContainer.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Enter a search term to find rules</div>';
+                return;
+            }
+
+            const matchingRules = autoFixSettings.customRegexRules.filter((rule, index) => {
+                const description = (rule.description || '').toLowerCase();
+                const find = (rule.find || '').toLowerCase();
+                const replace = (typeof rule.replace === 'string' ? rule.replace : rule.replace.toString()).toLowerCase();
+                
+                return description.includes(query) || find.includes(query) || replace.includes(query);
+            }).map((rule, originalIndex) => ({ rule, originalIndex: autoFixSettings.customRegexRules.indexOf(rule) }));
+
+            if (matchingRules.length === 0) {
+                resultsContainer.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">No rules found matching your search</div>';
+                return;
+            }
+
+            matchingRules.forEach(({ rule, originalIndex }) => {
+                const ruleElement = createSearchResultElement(rule, originalIndex);
+                resultsContainer.appendChild(ruleElement);
+            });
+        }
+
+        // Search on input
+        searchInput.addEventListener('input', performSearch);
+
+        // Initial empty state
+        resultsContainer.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">Enter a search term to find rules</div>';
+
+        // Close on backdrop click
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+
+        backdrop.appendChild(popup);
+        document.body.appendChild(backdrop);
+
+        // Focus search input
+        setTimeout(() => searchInput.focus(), 100);
+    }
+
+    // Function to create search result element
+    function createSearchResultElement(rule, index) {
+        const ruleDiv = document.createElement('div');
+        ruleDiv.style.cssText = `
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+        `;
+
+        const header = document.createElement('div');
+        header.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        `;
+
+        const enabledCheckbox = document.createElement('input');
+        enabledCheckbox.type = 'checkbox';
+        enabledCheckbox.checked = rule.enabled !== false;
+        enabledCheckbox.addEventListener('change', function() {
+            autoFixSettings.customRegexRules[index].enabled = this.checked;
+            saveSettings();
+        });
+
+        const description = document.createElement('span');
+        description.textContent = rule.description || `Rule ${index + 1}`;
+        description.style.cssText = `
+            font-weight: 400;
+            margin-left: 8px;
+            flex: 1;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        const deleteBtn = createSmallButton('Delete', () => {
+            autoFixSettings.customRegexRules.splice(index, 1);
+            saveSettings();
+            // Refresh the current search results
+            const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
+            if (searchInput) {
+                searchInput.dispatchEvent(new Event('input'));
+            }
+        });
+
+        header.appendChild(enabledCheckbox);
+        header.appendChild(description);
+        header.appendChild(deleteBtn);
+        ruleDiv.appendChild(header);
+
+        // Rule details
+        const details = document.createElement('div');
+        details.style.cssText = `
+            font-size: 12px;
+            color: #6c757d;
+            font-family: monospace;
+        `;
+        const replaceText = typeof rule.replace === 'string' ? rule.replace : '[Function]';
+        details.innerHTML = `
+            <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
+            <div><strong>Replace:</strong> ${replaceText}</div>
+        `;
+        ruleDiv.appendChild(details);
+
+        return ruleDiv;
+    }
+
     // Function to toggle settings popup
     function toggleSettingsPopup() {
         if (!settingsPopup) {
@@ -835,7 +1078,15 @@
     // Function to save settings to localStorage
     function saveSettings() {
         try {
-            localStorage.setItem('genius-autofix-settings', JSON.stringify(autoFixSettings));
+            // Create a copy for serialization, converting functions to strings
+            const settingsToSave = { ...autoFixSettings };
+            settingsToSave.customRegexRules = autoFixSettings.customRegexRules.map(rule => {
+                if (typeof rule.replace === 'function') {
+                    return { ...rule, replace: rule.replace.toString() };
+                }
+                return rule;
+            });
+            localStorage.setItem('genius-autofix-settings', JSON.stringify(settingsToSave));
         } catch (e) {
             console.log('Failed to save settings:', e);
         }
@@ -847,6 +1098,22 @@
             const saved = localStorage.getItem('genius-autofix-settings');
             if (saved) {
                 const loadedSettings = JSON.parse(saved);
+                
+                // Handle custom regex rules separately to restore functions
+                if (loadedSettings.customRegexRules) {
+                    loadedSettings.customRegexRules = loadedSettings.customRegexRules.map(rule => {
+                        if (typeof rule.replace === 'string' && rule.replace.startsWith('function')) {
+                            try {
+                                // Restore function from string
+                                rule.replace = eval(`(${rule.replace})`);
+                            } catch (e) {
+                                console.log('Failed to restore function for rule:', rule.description);
+                            }
+                        }
+                        return rule;
+                    });
+                }
+                
                 autoFixSettings = { ...autoFixSettings, ...loadedSettings };
                 // Load em dash state from settings
                 emDashEnabled = autoFixSettings.emDashEnabled || false;
@@ -3404,7 +3671,14 @@
                     try {
                         const regex = new RegExp(rule.find, rule.flags || 'gi');
                         const beforeLength = fixedText.length;
-                        fixedText = fixedText.replace(regex, rule.replace);
+                        
+                        // Handle both string and function replacements
+                        if (typeof rule.replace === 'function') {
+                            fixedText = fixedText.replace(regex, rule.replace);
+                        } else {
+                            fixedText = fixedText.replace(regex, rule.replace);
+                        }
+                        
                         const afterLength = fixedText.length;
                         if (beforeLength !== afterLength) {
                             console.log(`Custom rule "${rule.description}" applied changes`);
