@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      2.11
+// @version      2.12
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -725,7 +725,16 @@
             color: #6c757d;
             font-family: monospace;
         `;
-        const replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace;
+        let replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace;
+        
+        // Show both original and JavaScript-converted format if they differ
+        if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
+            let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+            if (jsReplacement !== rule.replace) {
+                replaceText += ` <span style="color: #28a745;">(JS: ${jsReplacement})</span>`;
+            }
+        }
+        
         details.innerHTML = `
             <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
             <div><strong>Replace:</strong> ${replaceText}</div>
@@ -1048,7 +1057,16 @@
             color: #6c757d;
             font-family: monospace;
         `;
-        const replaceText = typeof rule.replace === 'string' ? rule.replace : '[Function]';
+        let replaceText = typeof rule.replace === 'string' ? rule.replace : '[Function]';
+        
+        // Show both original and JavaScript-converted format if they differ
+        if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
+            let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+            if (jsReplacement !== rule.replace) {
+                replaceText += ` <span style="color: #28a745;">(JS: ${jsReplacement})</span>`;
+            }
+        }
+        
         details.innerHTML = `
             <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
             <div><strong>Replace:</strong> ${replaceText}</div>
@@ -3326,8 +3344,8 @@
             console.log('Restored phrase:', original);
         });
         
-        // Fix "sumn" to "somethin'"
-        fixedText = fixedText.replace(/\bsumn\b/gi, function(match) {
+        // Fix "sumn" to "somethin'" (but don't change "somethin'" to "somethin''")
+        fixedText = fixedText.replace(/\bsumn(?!')\b/gi, function(match) {
             // Preserve capitalization
             if (match === 'SUMN') return "SOMETHIN'";
             if (match === 'Sumn') return "Somethin'";
@@ -3371,8 +3389,8 @@
             return 'skrrt';
         });
         
-        // Fix "lil" or "li'l" to "lil'"
-        fixedText = fixedText.replace(/\b(lil|li'l)\b/gi, function(match) {
+        // Fix "lil" or "li'l" to "lil'" (but don't change "lil'" to "lil''")
+        fixedText = fixedText.replace(/\b(lil|li'l)(?!')\b/gi, function(match) {
             if (match === 'LIL' || match === "LI'L") return "LIL'";
             if (match === 'Lil' || match === "Li'l") return "Lil'";
             return "lil'";
@@ -3466,8 +3484,8 @@
         });
         
         // 'cause (because) - be careful not to change "cause" as in "the cause of"
-        // Also avoid matching when already preceded by an apostrophe
-        fixedText = fixedText.replace(/(?<!')\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
+        // Also avoid matching when already preceded by an apostrophe (straight or curly)
+        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
             if (match === 'CAUSE') return "'CAUSE";
             if (match === 'Cause') return "'Cause";
             return "'cause";
@@ -3493,8 +3511,8 @@
         });
         
         // 'fore (before)
-        // Also avoid matching when already preceded by an apostrophe
-        fixedText = fixedText.replace(/(?<!')\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
+        // Also avoid matching when already preceded by an apostrophe (straight or curly)
+        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
             if (match === 'FORE') return "'FORE";
             if (match === 'Fore') return "'Fore";
             return "'fore";
@@ -3639,6 +3657,41 @@
             });
         }
 
+        // Apply custom regex rules BEFORE number conversion
+        if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
+            console.log('Applying custom regex rules...');
+            autoFixSettings.customRegexRules.forEach((rule, index) => {
+                if (rule.enabled !== false) {
+                    try {
+                        const regex = new RegExp(rule.find, rule.flags || 'gi');
+                        const beforeLength = fixedText.length;
+                        
+                        // Handle both string and function replacements
+                        if (typeof rule.replace === 'function') {
+                            fixedText = fixedText.replace(regex, rule.replace);
+                        } else {
+                            // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
+                            let jsReplacement = rule.replace;
+                            if (typeof jsReplacement === 'string') {
+                                // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
+                                // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
+                                jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                            }
+                            
+                            fixedText = fixedText.replace(regex, jsReplacement);
+                        }
+                        
+                        const afterLength = fixedText.length;
+                        if (beforeLength !== afterLength) {
+                            console.log(`Custom rule "${rule.description}" applied changes`);
+                        }
+                    } catch (e) {
+                        console.log(`Custom regex rule "${rule.description}" failed:`, e.message);
+                    }
+                }
+            });
+        }
+
         // Convert numbers to text based on setting
         if (autoFixSettings.numberToText === 'on') {
             console.log('Converting numbers to text automatically...');
@@ -3661,33 +3714,6 @@
             
             // Skip the normal text application below since we already did it
             return;
-        }
-
-        // Apply custom regex rules
-        if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
-            console.log('Applying custom regex rules...');
-            autoFixSettings.customRegexRules.forEach((rule, index) => {
-                if (rule.enabled !== false) {
-                    try {
-                        const regex = new RegExp(rule.find, rule.flags || 'gi');
-                        const beforeLength = fixedText.length;
-                        
-                        // Handle both string and function replacements
-                        if (typeof rule.replace === 'function') {
-                            fixedText = fixedText.replace(regex, rule.replace);
-                        } else {
-                            fixedText = fixedText.replace(regex, rule.replace);
-                        }
-                        
-                        const afterLength = fixedText.length;
-                        if (beforeLength !== afterLength) {
-                            console.log(`Custom rule "${rule.description}" applied changes`);
-                        }
-                    } catch (e) {
-                        console.log(`Custom regex rule "${rule.description}" failed:`, e.message);
-                    }
-                }
-            });
         }
 
         console.log('Fixed text length:', fixedText.length);
