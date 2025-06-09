@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      2.12
+// @version      2.13
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -40,6 +40,7 @@
         bracketHighlighting: true,
         emDashFixes: true,
         capitalizeParentheses: true,
+        multipleSpaces: true,
         numberToText: 'ask', // Options: 'off', 'ask', 'on' - default to 'ask' for user control
         customRegex: true,
         customRegexRules: [], // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
@@ -331,14 +332,15 @@
             { key: 'bracketHighlighting', label: 'Highlight mismatched brackets', type: 'checkbox' },
             { key: 'emDashFixes', label: 'Convert word- to word—', type: 'checkbox' },
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
+            { key: 'multipleSpaces', label: 'Fix spacing (multiple spaces → single, remove trailing)', type: 'checkbox' },
+            { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
             { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown', 
               options: [
                   { value: 'off', label: 'Off' },
                   { value: 'ask', label: 'Ask for each number' },
                   { value: 'on', label: 'Convert automatically' }
               ]
-            },
-            { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' }
+            }
         ];
 
         settings.forEach(setting => {
@@ -366,26 +368,28 @@
                 label.textContent = setting.label;
                 label.style.cssText = `
                     font-size: 14px;
+                    cursor: pointer;
                     color: #444;
                     line-height: 1.4;
                     flex: 1;
                     font-weight: 100;
                     font-family: 'Programme', Arial, sans-serif;
-                    margin-bottom: 8px;
                 `;
 
                 const dropdown = document.createElement('select');
                 dropdown.id = `setting-${setting.key}`;
                 dropdown.style.cssText = `
                     margin-left: 12px;
-                    margin-top: 2px;
+                    margin-top: 0px;
                     cursor: pointer;
-                    padding: 4px 8px;
+                    padding: 1px 6px;
                     border: 1px solid #ddd;
                     border-radius: 4px;
                     background: #fff;
                     font-family: 'Programme', Arial, sans-serif;
                     font-size: 13px;
+                    height: 18px;
+                    vertical-align: middle;
                 `;
 
                 setting.options.forEach(option => {
@@ -401,20 +405,8 @@
                     saveSettings();
                 });
 
-                // Use vertical layout for dropdown
-                container.style.flexDirection = 'column';
-                container.style.alignItems = 'flex-start';
-                
-                const dropdownContainer = document.createElement('div');
-                dropdownContainer.style.cssText = `
-                    display: flex;
-                    align-items: center;
-                    width: 100%;
-                `;
-                
-                dropdownContainer.appendChild(label);
-                dropdownContainer.appendChild(dropdown);
-                container.appendChild(dropdownContainer);
+                container.appendChild(label);
+                container.appendChild(dropdown);
             } else {
                 // Create checkbox for regular settings
                 const checkbox = document.createElement('input');
@@ -480,7 +472,7 @@
             showRuleSearchPopup();
         });
         
-        const importBtn = createSmallButton('Import Rules', importRegexRules);
+        const importBtn = createImportDropdown();
         const exportBtn = createSmallButton('Export Rules', exportRegexRules);
 
         buttonContainer.appendChild(addRuleBtn);
@@ -492,6 +484,10 @@
         // Add rule form (initially hidden)
         const addRuleForm = createAddRuleForm();
         content.appendChild(addRuleForm);
+
+        // Import from clipboard form (initially hidden)
+        const clipboardImportForm = createClipboardImportForm();
+        content.appendChild(clipboardImportForm);
 
         // Rules container
         const rulesContainer = document.createElement('div');
@@ -598,6 +594,127 @@
         return form;
     }
 
+    // Function to create clipboard import form
+    function createClipboardImportForm() {
+        const form = document.createElement('div');
+        form.id = 'clipboard-import-form';
+        form.style.cssText = `
+            display: none;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: #f8f9fa;
+        `;
+
+        const title = document.createElement('h5');
+        title.textContent = 'Import from Clipboard';
+        title.style.cssText = `
+            margin: 0 0 16px 0;
+            font-size: 16px;
+            font-weight: 400;
+            color: #333;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+        form.appendChild(title);
+
+        // Description
+        const description = document.createElement('p');
+        description.textContent = 'Paste your JSON rules below:';
+        description.style.cssText = `
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            color: #666;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+        form.appendChild(description);
+
+        // Text area for JSON input
+        const textArea = document.createElement('textarea');
+        textArea.placeholder = 'Paste your JSON rules here...\n\nExample:\n[\n  {\n    "description": "wit -> with",\n    "find": "\\\\bwit\\\\b(?!\')",\n    "replace": "with",\n    "flags": "gi",\n    "enabled": true\n  }\n]';
+        textArea.style.cssText = `
+            width: 100%;
+            height: 150px;
+            padding: 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            font-weight: 100;
+            font-family: monospace, 'Programme', Arial, sans-serif;
+            font-size: 12px;
+            resize: vertical;
+            box-sizing: border-box;
+            margin-bottom: 16px;
+        `;
+        form.appendChild(textArea);
+
+        // Buttons
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 8px;
+        `;
+
+        const importBtn = createSmallButton('Import Rules', () => {
+            const jsonText = textArea.value.trim();
+            if (!jsonText) {
+                alert('Please paste your JSON rules first.');
+                return;
+            }
+            
+            processImportedData(jsonText, 'clipboard');
+            
+            // Clear form and hide it
+            textArea.value = '';
+            form.style.display = 'none';
+        });
+
+        importBtn.style.backgroundColor = '#007bff';
+        importBtn.style.color = 'white';
+        importBtn.style.borderColor = '#007bff';
+
+        const cancelBtn = createSmallButton('Cancel', () => {
+            textArea.value = '';
+            form.style.display = 'none';
+        });
+
+        buttonContainer.appendChild(importBtn);
+        buttonContainer.appendChild(cancelBtn);
+        form.appendChild(buttonContainer);
+
+        return form;
+    }
+
+    // Function to toggle clipboard import form
+    function toggleClipboardImportForm() {
+        const form = document.getElementById('clipboard-import-form');
+        const addRuleForm = document.getElementById('add-rule-form');
+        
+        // Hide add rule form if it's open
+        if (addRuleForm && addRuleForm.style.display !== 'none') {
+            addRuleForm.style.display = 'none';
+            // Reset add rule button text
+            const addRuleButton = addRuleForm.parentElement.querySelector('button');
+            if (addRuleButton && addRuleButton.textContent === 'Cancel') {
+                addRuleButton.textContent = '+ Add Rule';
+            }
+        }
+        
+        if (form) {
+            const isVisible = form.style.display !== 'none';
+            form.style.display = isVisible ? 'none' : 'block';
+            
+            // Focus the textarea when showing the form
+            if (!isVisible) {
+                const textArea = form.querySelector('textarea');
+                if (textArea) {
+                    setTimeout(() => textArea.focus(), 100);
+                }
+            }
+        }
+    }
+
 
 
     // Function to create small buttons
@@ -671,7 +788,7 @@
         });
     }
 
-    // Function to create a regex rule element
+    // Function to create a regex rule elementLMA
     function createRegexRuleElement(rule, index) {
         const ruleDiv = document.createElement('div');
         ruleDiv.style.cssText = `
@@ -777,8 +894,74 @@
         return container;
     }
 
-    // Function to import regex rules
-    function importRegexRules() {
+    // Function to create import dropdown
+    function createImportDropdown() {
+        const container = document.createElement('div');
+        container.style.cssText = `
+            position: relative;
+            display: inline-block;
+        `;
+
+        const dropdown = document.createElement('select');
+        dropdown.style.cssText = `
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            color: #333;
+            border-radius: 4px;
+            padding: 6px 12px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        dropdown.addEventListener('mouseenter', function() {
+            this.style.backgroundColor = '#e9ecef';
+            this.style.borderColor = '#adb5bd';
+        });
+
+        dropdown.addEventListener('mouseleave', function() {
+            this.style.backgroundColor = '#f8f9fa';
+            this.style.borderColor = '#dee2e6';
+        });
+
+        // Create options
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Import Rules';
+        defaultOption.disabled = true;
+        defaultOption.selected = true;
+
+        const fileOption = document.createElement('option');
+        fileOption.value = 'file';
+        fileOption.textContent = 'From File';
+
+        const clipboardOption = document.createElement('option');
+        clipboardOption.value = 'clipboard';
+        clipboardOption.textContent = 'From Clipboard';
+
+        dropdown.appendChild(defaultOption);
+        dropdown.appendChild(fileOption);
+        dropdown.appendChild(clipboardOption);
+
+        dropdown.addEventListener('change', function() {
+            const value = this.value;
+            this.value = ''; // Reset to default
+
+            if (value === 'file') {
+                importFromFile();
+            } else if (value === 'clipboard') {
+                toggleClipboardImportForm();
+            }
+        });
+
+        container.appendChild(dropdown);
+        return container;
+    }
+
+    // Function to import from file
+    function importFromFile() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -788,43 +971,50 @@
 
             const reader = new FileReader();
             reader.onload = function(e) {
-                try {
-                    const importedData = JSON.parse(e.target.result);
-                    let importedRules;
-                    
-                    // Handle both single rule objects and arrays of rules
-                    if (Array.isArray(importedData)) {
-                        importedRules = importedData;
-                    } else if (importedData && typeof importedData === 'object' && importedData.find && importedData.replace) {
-                        // Single rule object
-                        importedRules = [importedData];
-                    } else {
-                        alert('Invalid file format. Please select a valid JSON file containing regex rules.');
-                        return;
-                    }
-                    
-                    // Validate each rule has required fields
-                    const validRules = importedRules.filter(rule => 
-                        rule && typeof rule === 'object' && rule.find && rule.replace
-                    );
-                    
-                    if (validRules.length === 0) {
-                        alert('No valid regex rules found in the file.');
-                        return;
-                    }
-                    
-                    // Add to existing rules instead of replacing
-                    autoFixSettings.customRegexRules = [...(autoFixSettings.customRegexRules || []), ...validRules];
-                    saveSettings();
-                    refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
-                    alert(`Successfully imported ${validRules.length} regex rule(s).`);
-                } catch (error) {
-                    alert('Error reading file: ' + error.message);
-                }
+                processImportedData(e.target.result, 'file');
             };
             reader.readAsText(file);
         });
         input.click();
+    }
+
+
+
+    // Function to process imported data (common logic for both file and clipboard)
+    function processImportedData(dataString, source) {
+        try {
+            const importedData = JSON.parse(dataString);
+            let importedRules;
+            
+            // Handle both single rule objects and arrays of rules
+            if (Array.isArray(importedData)) {
+                importedRules = importedData;
+            } else if (importedData && typeof importedData === 'object' && importedData.find && importedData.replace) {
+                // Single rule object
+                importedRules = [importedData];
+            } else {
+                alert(`Invalid format. Please ${source === 'file' ? 'select a valid JSON file' : 'copy valid JSON data'} containing regex rules.`);
+                return;
+            }
+            
+            // Validate each rule has required fields
+            const validRules = importedRules.filter(rule => 
+                rule && typeof rule === 'object' && rule.find && rule.replace
+            );
+            
+            if (validRules.length === 0) {
+                alert('No valid regex rules found in the data.');
+                return;
+            }
+            
+            // Add to existing rules instead of replacing
+            autoFixSettings.customRegexRules = [...(autoFixSettings.customRegexRules || []), ...validRules];
+            saveSettings();
+            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+            alert(`Successfully imported ${validRules.length} regex rule(s) from ${source}.`);
+        } catch (error) {
+            alert(`Error parsing data from ${source}: ` + error.message);
+        }
     }
 
     // Function to export regex rules
@@ -2105,6 +2295,75 @@
 
     // Interactive number conversion system
     let currentNumberConversion = null;
+    let declinedNumbers = new Set(); // Track numbers user said "no" to on this page
+    
+    // Function to create unique ID for a number instance
+    function createNumberUID(text, position, numberText) {
+        // Create context around the number for uniqueness
+        const contextStart = Math.max(0, position - 20);
+        const contextEnd = Math.min(text.length, position + numberText.length + 20);
+        const context = text.slice(contextStart, contextEnd);
+        
+        // Create UID from number, position, and context
+        return `${numberText}_${position}_${context.replace(/\s+/g, '_')}`;
+    }
+    
+    // Function to get localStorage key for declined numbers on this page
+    function getDeclinedNumbersKey() {
+        const url = window.location.href;
+        const baseUrl = url.split('?')[0].split('#')[0]; // Remove query params and hash
+        return `genius-declined-numbers-${baseUrl}`;
+    }
+    
+    // Function to save declined numbers to localStorage
+    function saveDeclinedNumbers() {
+        try {
+            const now = Date.now();
+            const dataToSave = {};
+            
+            // Convert Set to object with timestamps
+            declinedNumbers.forEach(uid => {
+                dataToSave[uid] = now;
+            });
+            
+            localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(dataToSave));
+            console.log('Saved declined numbers to localStorage:', Object.keys(dataToSave).length, 'entries');
+        } catch (e) {
+            console.log('Failed to save declined numbers:', e);
+        }
+    }
+    
+    // Function to load declined numbers from localStorage
+    function loadDeclinedNumbers() {
+        try {
+            const saved = localStorage.getItem(getDeclinedNumbersKey());
+            if (saved) {
+                const data = JSON.parse(saved);
+                const now = Date.now();
+                const oneWeek = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+                
+                // Filter out entries older than a week and load valid ones
+                const validEntries = {};
+                Object.keys(data).forEach(uid => {
+                    const timestamp = data[uid];
+                    if (now - timestamp <= oneWeek) {
+                        validEntries[uid] = timestamp;
+                        declinedNumbers.add(uid);
+                    }
+                });
+                
+                // Save back the cleaned data if we removed any old entries
+                if (Object.keys(validEntries).length !== Object.keys(data).length) {
+                    localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(validEntries));
+                    console.log('Cleaned up old declined numbers entries');
+                }
+                
+                console.log('Loaded', Object.keys(validEntries).length, 'declined numbers from localStorage');
+            }
+        } catch (e) {
+            console.log('Failed to load declined numbers:', e);
+        }
+    }
     
     function startInteractiveNumberConversion(textEditor) {
         if (!textEditor) return;
@@ -2372,11 +2631,20 @@
                 // Double-check this number isn't inside protected content
                 if (!isInsideProtectedContent(text, originalPosition, match, protectedRanges)) {
                     const converted = convertPluralNumber(numStr);
+                    const uid = createNumberUID(text, originalPosition, match);
+                    
+                    // Skip if user already declined this number
+                    if (declinedNumbers.has(uid)) {
+                        console.log('Skipping previously declined plural number:', match);
+                        return match;
+                    }
+                    
                     console.log('Adding plural conversion:', match, '→', converted, 'at position', originalPosition);
                     convertibleNumbers.push({
                         original: match,
                         converted: converted,
-                        position: originalPosition
+                        position: originalPosition,
+                        uid: uid
                     });
                 } else {
                     console.log('Skipping plural number inside protected content:', match);
@@ -2394,11 +2662,20 @@
                 // Double-check this number isn't inside protected content
                 if (!isInsideProtectedContent(text, originalPosition, match, protectedRanges)) {
                     const converted = convertStandaloneNumber(num);
+                    const uid = createNumberUID(text, originalPosition, match);
+                    
+                    // Skip if user already declined this number
+                    if (declinedNumbers.has(uid)) {
+                        console.log('Skipping previously declined standalone number:', match);
+                        return match;
+                    }
+                    
                     console.log('Adding standalone conversion:', match, '→', converted, 'at position', originalPosition);
                     convertibleNumbers.push({
                         original: match,
                         converted: converted,
-                        position: originalPosition
+                        position: originalPosition,
+                        uid: uid
                     });
                 } else {
                     console.log('Skipping standalone number inside protected content:', match);
@@ -2612,10 +2889,20 @@
             // No - skip this conversion
             processNumberConversionsInteractively(textEditor, conversions, currentIndex + 1);
         }, () => {
-            // No to all - cancel all remaining conversions
-            console.log('No to all selected - canceling all remaining number conversions');
+            // No to all - decline all remaining conversions
+            console.log('No to all selected - declining all remaining number conversions');
+            
+            // Add all remaining conversions (including current) to declined list
+            for (let i = currentIndex; i < conversions.length; i++) {
+                declinedNumbers.add(conversions[i].uid);
+                console.log('Declined (no to all):', conversions[i].original, 'UID:', conversions[i].uid);
+            }
+            
+            // Save all declined numbers to localStorage
+            saveDeclinedNumbers();
+            
             return; // Exit without processing any more conversions
-        });
+        }, conversions, currentIndex);
     }
     
     function findCurrentPosition(textEditor, conversion, hasChanges) {
@@ -2697,7 +2984,7 @@
         }
     }
     
-    function showNumberConversionPopup(textEditor, conversion, onYes, onNo, onNoToAll) {
+    function showNumberConversionPopup(textEditor, conversion, onYes, onNo, onNoToAll, conversions, currentIndex) {
         // Remove any existing popup and associated listeners
         cleanupCurrentNumberPopup();
         
@@ -2766,7 +3053,9 @@
         `;
         
         const noToAllBtn = document.createElement('button');
-        noToAllBtn.textContent = 'No to all';
+        // Show how many numbers will be declined
+        const remainingCount = conversions ? conversions.length - currentIndex : 1;
+        noToAllBtn.textContent = `No to all (${remainingCount})`;
         noToAllBtn.style.cssText = `
             background: rgba(244, 67, 54, 0.9);
             color: white;
@@ -2813,6 +3102,10 @@
         noBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            // Remember this number was declined
+            declinedNumbers.add(conversion.uid);
+            saveDeclinedNumbers();
+            console.log('Added to declined numbers:', conversion.uid);
             removeNumberHighlight(textEditor);
             cleanupCurrentNumberPopup();
             onNo();
@@ -2835,6 +3128,10 @@
                 onYes();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
+                // Remember this number was declined
+                declinedNumbers.add(conversion.uid);
+                saveDeclinedNumbers();
+                console.log('Added to declined numbers (Escape key):', conversion.uid);
                 removeNumberHighlight(textEditor);
                 cleanupCurrentNumberPopup();
                 onNo();
@@ -3657,6 +3954,15 @@
             });
         }
 
+        // Replace multiple consecutive spaces with single space and remove trailing spaces
+        if (autoFixSettings.multipleSpaces) {
+            console.log('Replacing multiple spaces with single space and removing trailing spaces...');
+            // Pattern: 2 or more consecutive space characters
+            fixedText = fixedText.replace(/ {2,}/g, ' ');
+            // Pattern: spaces or tabs at the end of lines (before newlines)
+            fixedText = fixedText.replace(/[ \t]+$/gm, '');
+        }
+
         // Apply custom regex rules BEFORE number conversion
         if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
             console.log('Applying custom regex rules...');
@@ -4348,6 +4654,10 @@
 
         // Reset restore prompt flag for new page
         hasShownRestorePrompt = false;
+        
+        // Load declined numbers from localStorage (per page, expires after 1 week)
+        declinedNumbers.clear();
+        loadDeclinedNumbers();
 
                  // Add global event listeners (only once)
         document.addEventListener('keypress', handleKeyPress);
