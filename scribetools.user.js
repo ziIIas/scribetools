@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      2.13
+// @version      3.0
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -45,6 +45,337 @@
         customRegex: true,
         customRegexRules: [], // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
         emDashEnabled: false // Save em dash toggle state
+    };
+
+
+
+    // ===========================================
+    // UI UTILITY FUNCTIONS
+    // ===========================================
+    
+    const UI = {
+        // CSS Constants
+        COLORS: {
+            primary: '#007bff',
+            secondary: '#6c757d', 
+            success: '#28a745',
+            light: '#f8f9fa',
+            border: '#dee2e6',
+            borderLight: '#e9ecef',
+            borderHover: '#adb5bd',
+            text: '#333',
+            textMuted: '#666',
+            backgroundHover: '#e9ecef'
+        },
+        
+        FONTS: {
+            primary: "'Programme', Arial, sans-serif",
+            monospace: "monospace, 'Programme', Arial, sans-serif"
+        },
+        
+        TRANSITIONS: {
+            standard: 'all 0.2s ease'
+        },
+        
+        // Create standardized button
+        createButton(text, clickHandler, options = {}) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            
+            const defaults = {
+                background: this.COLORS.light,
+                border: `1px solid ${this.COLORS.border}`,
+                color: this.COLORS.text,
+                padding: '6px 12px',
+                fontSize: '12px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                transition: this.TRANSITIONS.standard,
+                fontWeight: '100',
+                fontFamily: this.FONTS.primary,
+                textAlign: 'left'  // Fix text alignment issue
+            };
+            
+            const styles = { ...defaults, ...options.styles };
+            button.style.cssText = Object.entries(styles)
+                .map(([key, value]) => `${key.replace(/([A-Z])/g, '-$1').toLowerCase()}: ${value}`)
+                .join('; ');
+            
+            if (options.hover !== false) {
+                this.addHoverEffect(button, {
+                    backgroundColor: this.COLORS.backgroundHover,
+                    borderColor: this.COLORS.borderHover
+                });
+            }
+            
+            if (clickHandler) {
+                button.addEventListener('click', clickHandler);
+            }
+            
+            return button;
+        },
+        
+        // Create close button
+        createCloseButton(clickHandler) {
+            const button = document.createElement('button');
+            button.innerHTML = '×';
+            button.title = 'Close';
+            
+            button.style.cssText = `
+                background: none;
+                border: none;
+                font-size: 24px;
+                font-weight: 300;
+                color: ${this.COLORS.textMuted};
+                cursor: pointer;
+                padding: 0;
+                width: 30px;
+                height: 30px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                transition: ${this.TRANSITIONS.standard};
+            `;
+            
+            this.addHoverEffect(button, {
+                backgroundColor: '#f5f5f5',
+                color: this.COLORS.text
+            });
+            
+            if (clickHandler) {
+                button.addEventListener('click', clickHandler);
+            }
+            
+            return button;
+        },
+        
+        // Create flex container
+        createFlexContainer(direction = 'row', gap = '0', additionalStyles = {}) {
+            const container = document.createElement('div');
+            
+            const baseStyles = {
+                display: 'flex',
+                flexDirection: direction,
+                gap: gap,
+                alignItems: 'center'
+            };
+            
+            const styles = { ...baseStyles, ...additionalStyles };
+            container.style.cssText = Object.entries(styles)
+                .map(([key, value]) => `${key.replace(/([A-Z])/g, '-$1').toLowerCase()}: ${value}`)
+                .join('; ');
+            
+            return container;
+        },
+        
+        // Create popup backdrop
+        createBackdrop(clickHandler = null) {
+            const backdrop = document.createElement('div');
+            backdrop.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                display: none;
+                z-index: 10001;
+                backdrop-filter: blur(2px);
+            `;
+            
+            if (clickHandler) {
+                backdrop.addEventListener('click', clickHandler);
+            }
+            
+            return backdrop;
+        },
+        
+        // Create popup
+        createPopup(additionalStyles = {}) {
+            const popup = document.createElement('div');
+            
+            const baseStyles = {
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                background: '#fff',
+                border: '1px solid #ddd',
+                borderRadius: '12px',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                padding: '24px',
+                display: 'none',
+                zIndex: '10002',
+                fontFamily: this.FONTS.primary,
+                minWidth: '350px',
+                maxWidth: '500px',
+                maxHeight: '80vh',
+                overflowY: 'auto'
+            };
+            
+            const styles = { ...baseStyles, ...additionalStyles };
+            popup.style.cssText = Object.entries(styles)
+                .map(([key, value]) => `${key.replace(/([A-Z])/g, '-$1').toLowerCase()}: ${value}`)
+                .join('; ');
+            
+            return popup;
+        },
+        
+        // Create popup header
+        createPopupHeader(titleText, onClose) {
+            const header = this.createFlexContainer('row', '0', {
+                justifyContent: 'space-between',
+                marginBottom: '20px',
+                paddingBottom: '12px',
+                borderBottom: '1px solid #eee'
+            });
+            
+            const title = document.createElement('h3');
+            title.textContent = titleText;
+            title.style.cssText = `
+                margin: 0;
+                font-size: 18px;
+                font-weight: 400;
+                color: ${this.COLORS.text};
+                font-family: ${this.FONTS.primary};
+            `;
+            
+            const closeButton = this.createCloseButton(onClose);
+            
+            header.appendChild(title);
+            header.appendChild(closeButton);
+            
+            return header;
+        },
+        
+        // Add hover effect utility
+        addHoverEffect(element, hoverStyles, originalStyles = null) {
+            // Store original styles if not provided
+            if (!originalStyles) {
+                originalStyles = {};
+                Object.keys(hoverStyles).forEach(key => {
+                    const styleKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+                    originalStyles[key] = element.style[key] || 
+                        getComputedStyle(element)[styleKey];
+                });
+            }
+            
+            element.addEventListener('mouseenter', function() {
+                Object.entries(hoverStyles).forEach(([key, value]) => {
+                    this.style[key] = value;
+                });
+            });
+            
+            element.addEventListener('mouseleave', function() {
+                Object.entries(originalStyles).forEach(([key, value]) => {
+                    this.style[key] = value;
+                });
+            });
+        },
+        
+        // Create form field
+        createFormField(label, type, value = '', isMonospace = false) {
+            const container = this.createFlexContainer('column', '4px', {
+                alignItems: 'stretch'  // Override the default 'center' alignment
+            });
+            
+            const labelEl = document.createElement('label');
+            labelEl.textContent = label;
+            labelEl.style.cssText = `
+                font-weight: 400; 
+                color: ${this.COLORS.text};
+                font-family: ${this.FONTS.primary};
+                text-align: left;
+            `;
+            
+            const input = document.createElement('input');
+            input.type = type;
+            input.value = value;
+            input.style.cssText = `
+                padding: 8px 12px;
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background: #fff;
+                color: ${this.COLORS.text};
+                font-weight: 100;
+                font-family: ${isMonospace ? this.FONTS.monospace : this.FONTS.primary};
+                text-align: left;
+            `;
+            
+            container.appendChild(labelEl);
+            container.appendChild(input);
+            return container;
+        },
+        
+        // Create rule element (unified for both regular and search results)
+        createRuleElement(rule, index, onToggle, onDelete, isSearchResult = false) {
+            const ruleDiv = document.createElement('div');
+            ruleDiv.style.cssText = `
+                border: 1px solid ${this.COLORS.borderLight};
+                border-radius: 8px;
+                padding: 12px;
+                margin-bottom: 8px;
+                background: ${this.COLORS.light};
+            `;
+            
+            const header = this.createFlexContainer('row', '8px', {
+                justifyContent: 'space-between',
+                marginBottom: '8px'
+            });
+            
+            const enabledCheckbox = document.createElement('input');
+            enabledCheckbox.type = 'checkbox';
+            enabledCheckbox.checked = rule.enabled !== false;
+            enabledCheckbox.addEventListener('change', () => onToggle(index, enabledCheckbox.checked));
+            
+            const description = document.createElement('span');
+            description.textContent = rule.description || `Rule ${index + 1}`;
+            description.style.cssText = `
+                font-weight: 400;
+                flex: 1;
+                font-family: ${this.FONTS.primary};
+            `;
+            
+            const deleteBtn = this.createButton('Delete', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete(index);
+            }, {
+                styles: { fontSize: '12px', padding: '4px 8px' }
+            });
+            
+            header.appendChild(enabledCheckbox);
+            header.appendChild(description);
+            header.appendChild(deleteBtn);
+            ruleDiv.appendChild(header);
+            
+            // Rule details
+            const details = document.createElement('div');
+            details.style.cssText = `
+                font-size: 12px;
+                color: ${this.COLORS.secondary};
+                font-family: monospace;
+            `;
+            
+            let replaceText = typeof rule.replace === 'string' ? rule.replace : 
+                             typeof rule.replace === 'function' ? '[Function]' : rule.replace;
+            
+            if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
+                let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                if (jsReplacement !== rule.replace) {
+                    replaceText += ` <span style="color: ${this.COLORS.success};">(JS: ${jsReplacement})</span>`;
+                }
+            }
+            
+            details.innerHTML = `
+                <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
+                <div><strong>Replace:</strong> ${replaceText}</div>
+            `;
+            ruleDiv.appendChild(details);
+            
+            return ruleDiv;
+        }
     };
 
     // Function to create the toggle button
@@ -103,111 +434,28 @@
 
     // Function to create the settings popup
     function createSettingsPopup() {
-        // Create backdrop
-        const backdrop = document.createElement('div');
+        // Create backdrop using utility
+        const backdrop = UI.createBackdrop(() => {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
         backdrop.id = 'genius-settings-backdrop';
-        backdrop.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            display: none;
-            z-index: 10001;
-            backdrop-filter: blur(2px);
-        `;
 
-                 const popup = document.createElement('div');
+        // Create popup using utility
+        const popup = UI.createPopup();
         popup.id = 'genius-settings-popup';
-        popup.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: #fff;
-            border: 1px solid #ddd;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-            padding: 24px;
-            display: none;
-            z-index: 10002;
-            font-family: 'Programme', Arial, sans-serif;
-            min-width: 350px;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow-y: auto;
-        `;
 
-        // Create header with title and close button
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #eee;
-        `;
-
-                 const title = document.createElement('h3');
-        title.textContent = 'Auto Fix Settings';
-        title.style.cssText = `
-            margin: 0;
-            font-size: 18px;
-            font-weight: 400;
-            color: #333;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        const closeButton = document.createElement('button');
-        closeButton.innerHTML = '×';
-        closeButton.title = 'Close Settings';
-        closeButton.style.cssText = `
-            background: none;
-            border: none;
-            font-size: 24px;
-            font-weight: 300;
-            color: #666;
-            cursor: pointer;
-            padding: 0;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            transition: all 0.2s ease;
-        `;
-
-        closeButton.addEventListener('mouseenter', function() {
-            this.style.backgroundColor = '#f5f5f5';
-            this.style.color = '#333';
-        });
-
-        closeButton.addEventListener('mouseleave', function() {
-            this.style.backgroundColor = 'transparent';
-            this.style.color = '#666';
-        });
-
-        closeButton.addEventListener('click', function() {
+        // Create header using utility
+        const header = UI.createPopupHeader('Auto Fix Settings', () => {
             backdrop.style.display = 'none';
             popup.style.display = 'none';
         });
 
-        header.appendChild(title);
-        header.appendChild(closeButton);
         popup.appendChild(header);
 
         // Create tabbed interface
         const tabContainer = createTabbedInterface();
         popup.appendChild(tabContainer);
-
-        // Add backdrop click handler to close
-        backdrop.addEventListener('click', function() {
-            backdrop.style.display = 'none';
-            popup.style.display = 'none';
-        });
 
         document.body.appendChild(backdrop);
         document.body.appendChild(popup);
@@ -719,48 +967,12 @@
 
     // Function to create small buttons
     function createSmallButton(text, clickHandler) {
-        const button = document.createElement('button');
-        button.textContent = text;
-        
-        // Store original styles
-        const originalBgColor = '#f8f9fa';
-        const originalBorderColor = '#dee2e6';
-        const originalTextColor = '#333';
-        const hoverBgColor = '#e9ecef';
-        const hoverBorderColor = '#adb5bd';
-        
-        button.style.cssText = `
-            background: ${originalBgColor};
-            border: 1px solid ${originalBorderColor};
-            color: ${originalTextColor};
-            border-radius: 4px;
-            padding: 6px 12px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            font-weight: 100;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        button.addEventListener('mouseenter', function() {
-            // Only apply hover styles if the button hasn't been customized
-            if (this.style.backgroundColor === originalBgColor || this.style.backgroundColor === 'rgb(248, 249, 250)') {
-                this.style.backgroundColor = hoverBgColor;
-                this.style.borderColor = hoverBorderColor;
+        return UI.createButton(text, clickHandler, {
+            styles: {
+                fontSize: '12px',
+                padding: '6px 12px'
             }
         });
-
-        button.addEventListener('mouseleave', function() {
-            // Only reset to original if it was in hover state
-            if (this.style.backgroundColor === hoverBgColor || this.style.backgroundColor === 'rgb(233, 236, 239)') {
-                this.style.backgroundColor = originalBgColor;
-                this.style.borderColor = originalBorderColor;
-                this.style.color = originalTextColor;
-            }
-        });
-
-        button.addEventListener('click', clickHandler);
-        return button;
     }
 
     // Function to refresh the custom regex rules display
@@ -788,110 +1000,29 @@
         });
     }
 
-    // Function to create a regex rule elementLMA
+    // Function to create a regex rule element
     function createRegexRuleElement(rule, index) {
-        const ruleDiv = document.createElement('div');
-        ruleDiv.style.cssText = `
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-            background: #f8f9fa;
-        `;
-
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        `;
-
-        const enabledCheckbox = document.createElement('input');
-        enabledCheckbox.type = 'checkbox';
-        enabledCheckbox.checked = rule.enabled !== false; // Default to enabled
-        enabledCheckbox.addEventListener('change', function() {
-            autoFixSettings.customRegexRules[index].enabled = this.checked;
-            saveSettings();
-        });
-
-                 const description = document.createElement('span');
-        description.textContent = rule.description || `Rule ${index + 1}`;
-        description.style.cssText = `
-            font-weight: 400;
-            margin-left: 8px;
-            flex: 1;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        const deleteBtn = createSmallButton('Delete', () => {
-            autoFixSettings.customRegexRules.splice(index, 1);
-            saveSettings();
-            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
-        });
-
-        header.appendChild(enabledCheckbox);
-        header.appendChild(description);
-        header.appendChild(deleteBtn);
-        ruleDiv.appendChild(header);
-
-        // Rule details
-        const details = document.createElement('div');
-        details.style.cssText = `
-            font-size: 12px;
-            color: #6c757d;
-            font-family: monospace;
-        `;
-        let replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace;
-        
-        // Show both original and JavaScript-converted format if they differ
-        if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
-            let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
-            if (jsReplacement !== rule.replace) {
-                replaceText += ` <span style="color: #28a745;">(JS: ${jsReplacement})</span>`;
+        return UI.createRuleElement(rule, index,
+            // onToggle
+            (idx, enabled) => {
+                autoFixSettings.customRegexRules[idx].enabled = enabled;
+                saveSettings();
+            },
+            // onDelete  
+            (idx) => {
+                autoFixSettings.customRegexRules.splice(idx, 1);
+                saveSettings();
+                refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
             }
-        }
-        
-        details.innerHTML = `
-            <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
-            <div><strong>Replace:</strong> ${replaceText}</div>
-        `;
-        ruleDiv.appendChild(details);
-
-        return ruleDiv;
+        );
     }
 
 
 
          // Function to create form fields
     function createFormField(label, type, value = '') {
-        const container = document.createElement('div');
-        container.style.cssText = `display: flex; flex-direction: column; gap: 4px;`;
-
-                 const labelEl = document.createElement('label');
-        labelEl.textContent = label;
-        labelEl.style.cssText = `
-            font-weight: 400; 
-            color: #333;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        const input = document.createElement('input');
-        input.type = type;
-        input.value = value;
-                 input.style.cssText = `
-            padding: 8px 12px;
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-            background: #fff;
-            color: #333;
-            font-weight: 100;
-            font-family: ${type === 'text' && (label.includes('Pattern') || label.includes('Replace')) ? 'monospace, \'Programme\', Arial, sans-serif' : '\'Programme\', Arial, sans-serif'};
-        `;
-
-        container.appendChild(labelEl);
-        container.appendChild(input);
-        return container;
+        const isMonospace = type === 'text' && (label.includes('Pattern') || label.includes('Replace'));
+        return UI.createFormField(label, type, value, isMonospace);
     }
 
     // Function to create import dropdown
@@ -1038,81 +1169,32 @@
 
     // Function to show rule search popup
     function showRuleSearchPopup() {
-        // Create backdrop
-        const backdrop = document.createElement('div');
-        backdrop.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10004;
-            backdrop-filter: blur(2px);
-        `;
+        // Create backdrop using utility
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10004';
 
-        const popup = document.createElement('div');
-        popup.style.cssText = `
-            background: #fff;
-            border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-            padding: 24px;
-            font-family: 'Programme', Arial, sans-serif;
-            min-width: 400px;
-            max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
-        `;
+        // Create popup using utility  
+        const popup = UI.createPopup({
+            minWidth: '400px',
+            maxWidth: '600px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none'
+        });
 
-        // Header
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid #eee;
-        `;
-
-        const title = document.createElement('h3');
-        title.textContent = 'Search Rules';
-        title.style.cssText = `
-            margin: 0;
-            font-size: 18px;
-            font-weight: 400;
-            color: #333;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        const closeButton = document.createElement('button');
-        closeButton.innerHTML = '×';
-        closeButton.style.cssText = `
-            background: none;
-            border: none;
-            font-size: 24px;
-            font-weight: 300;
-            color: #666;
-            cursor: pointer;
-            padding: 0;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            transition: all 0.2s ease;
-        `;
-
-        closeButton.addEventListener('click', () => {
+        // Create header using utility
+        const header = UI.createPopupHeader('Search Rules', () => {
             document.body.removeChild(backdrop);
         });
 
-        header.appendChild(title);
-        header.appendChild(closeButton);
         popup.appendChild(header);
 
         // Search input
@@ -1184,6 +1266,9 @@
 
         backdrop.appendChild(popup);
         document.body.appendChild(backdrop);
+        
+        // Show the popup (override the default 'none' from utility)
+        popup.style.display = 'block';
 
         // Focus search input
         setTimeout(() => searchInput.focus(), 100);
@@ -1191,79 +1276,24 @@
 
     // Function to create search result element
     function createSearchResultElement(rule, index) {
-        const ruleDiv = document.createElement('div');
-        ruleDiv.style.cssText = `
-            border: 1px solid #e9ecef;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-            background: #f8f9fa;
-        `;
-
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        `;
-
-        const enabledCheckbox = document.createElement('input');
-        enabledCheckbox.type = 'checkbox';
-        enabledCheckbox.checked = rule.enabled !== false;
-        enabledCheckbox.addEventListener('change', function() {
-            autoFixSettings.customRegexRules[index].enabled = this.checked;
-            saveSettings();
-        });
-
-        const description = document.createElement('span');
-        description.textContent = rule.description || `Rule ${index + 1}`;
-        description.style.cssText = `
-            font-weight: 400;
-            margin-left: 8px;
-            flex: 1;
-            font-family: 'Programme', Arial, sans-serif;
-        `;
-
-        const deleteBtn = createSmallButton('Delete', () => {
-            autoFixSettings.customRegexRules.splice(index, 1);
-            saveSettings();
-            // Refresh the current search results
-            const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
-            if (searchInput) {
-                searchInput.dispatchEvent(new Event('input'));
-            }
-        });
-
-        header.appendChild(enabledCheckbox);
-        header.appendChild(description);
-        header.appendChild(deleteBtn);
-        ruleDiv.appendChild(header);
-
-        // Rule details
-        const details = document.createElement('div');
-        details.style.cssText = `
-            font-size: 12px;
-            color: #6c757d;
-            font-family: monospace;
-        `;
-        let replaceText = typeof rule.replace === 'string' ? rule.replace : '[Function]';
-        
-        // Show both original and JavaScript-converted format if they differ
-        if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
-            let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
-            if (jsReplacement !== rule.replace) {
-                replaceText += ` <span style="color: #28a745;">(JS: ${jsReplacement})</span>`;
-            }
-        }
-        
-        details.innerHTML = `
-            <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
-            <div><strong>Replace:</strong> ${replaceText}</div>
-        `;
-        ruleDiv.appendChild(details);
-
-        return ruleDiv;
+        return UI.createRuleElement(rule, index,
+            // onToggle
+            (idx, enabled) => {
+                autoFixSettings.customRegexRules[idx].enabled = enabled;
+                saveSettings();
+            },
+            // onDelete
+            (idx) => {
+                autoFixSettings.customRegexRules.splice(idx, 1);
+                saveSettings();
+                // Refresh the current search results
+                const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
+                if (searchInput) {
+                    searchInput.dispatchEvent(new Event('input'));
+                }
+            },
+            true // isSearchResult flag
+        );
     }
 
     // Function to toggle settings popup
@@ -1296,7 +1326,6 @@
             });
             localStorage.setItem('genius-autofix-settings', JSON.stringify(settingsToSave));
         } catch (e) {
-            console.log('Failed to save settings:', e);
         }
     }
 
@@ -1315,7 +1344,7 @@
                                 // Restore function from string
                                 rule.replace = eval(`(${rule.replace})`);
                             } catch (e) {
-                                console.log('Failed to restore function for rule:', rule.description);
+
                             }
                         }
                         return rule;
@@ -1327,7 +1356,6 @@
                 emDashEnabled = autoFixSettings.emDashEnabled || false;
             }
         } catch (e) {
-            console.log('Failed to load settings:', e);
         }
     }
 
@@ -1374,9 +1402,7 @@
         try {
             localStorage.setItem(getAutoSaveKey(), JSON.stringify(saveData));
             lastSavedContent = content;
-            console.log('Auto-saved content:', content.length, 'characters');
         } catch (e) {
-            console.log('Failed to auto-save:', e);
         }
     }
 
@@ -1384,9 +1410,7 @@
         try {
             localStorage.removeItem(getAutoSaveKey());
             lastSavedContent = '';
-            console.log('Auto-save cleared');
         } catch (e) {
-            console.log('Failed to clear auto-save:', e);
         }
     }
 
@@ -1550,34 +1574,20 @@
         let textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
                         document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
 
-        console.log('Looking for lyrics editor...', {
-            found: !!textEditor,
-            editorType: textEditor?.tagName,
-            editorClass: textEditor?.className,
-            editorId: textEditor?.id
-        });
+
 
         if (textEditor) {
             // Editor found, restore immediately
             performRestore(textEditor, saveData);
         } else {
-            console.log('No lyrics editor found');
             alert('Could not find the lyrics editor. Please ensure you are in editing mode.');
         }
     }
 
     function performRestore(textEditor, saveData) {
-        console.log('performRestore called with:', {
-            editorType: textEditor.tagName,
-            editorId: textEditor.id,
-            editorClass: textEditor.className,
-            contentLength: saveData.content.length,
-            contentPreview: saveData.content.substring(0, 50) + '...'
-        });
 
         try {
             if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-                console.log('Restoring to textarea/input, current value length:', textEditor.value.length);
                 
                 // Focus the element
                 textEditor.focus();
@@ -1601,11 +1611,9 @@
                     textEditor.selectionStart = saveData.selectionStart;
                     textEditor.selectionEnd = saveData.selectionEnd;
                 }
-                
-                console.log('Content restored directly to textarea');
+
                 
             } else if (textEditor.isContentEditable) {
-                console.log('Restoring to contenteditable, current length:', textEditor.textContent.length);
                 
                 textEditor.focus();
                 textEditor.textContent = saveData.content;
@@ -1618,7 +1626,6 @@
 
             lastSavedContent = saveData.content;
             hasShownRestorePrompt = true; // Mark as handled
-            console.log('Content restoration completed');
             
         } catch (error) {
             console.error('Error during content restoration:', error);
@@ -1663,7 +1670,6 @@
                 
                 // Clean up highlights when entering edit mode
                 if (buttonText.includes('edit') && buttonText.includes('lyrics')) {
-                    console.log('Edit lyrics button clicked, immediately cleaning highlights...');
                     // Immediate global cleanup
                     removeNumberHighlight(null);
                     
@@ -1688,25 +1694,21 @@
                 }
                 // Clear auto-save immediately when Cancel button is clicked
                 else if (buttonText.includes('cancel') || buttonClasses.includes('hvIRPS')) {
-                    console.log('Cancel button clicked, clearing auto-save...');
                     clearAutoSave();
                     isEditing = false;
                 }
                 
                 // Clean up number conversion popup when Cancel or Save & Exit is clicked
                 if (buttonText.includes('cancel') || buttonText.includes('save') || buttonClasses.includes('hvIRPS')) {
-                    console.log('Genius Cancel/Save button clicked, cleaning up number conversion popup...');
                     const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
                                       document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                     if (textEditor) {
                         // Always remove highlighting regardless of popup state
                         removeNumberHighlight(textEditor);
-                        console.log('Removed number highlighting from text editor');
                     }
                     // Clean up popup if it exists
                     if (currentNumberConversion) {
                         cleanupCurrentNumberPopup();
-                        console.log('Cleaned up number conversion popup');
                     }
                 }
             }
@@ -1714,7 +1716,7 @@
 
 
 
-        console.log('Auto-save started');
+
     }
 
     function stopAutoSave() {
@@ -1723,7 +1725,6 @@
             autoSaveInterval = null;
         }
         isEditing = false;
-        console.log('Auto-save stopped');
     }
 
     // Function to create the zero-width space button
@@ -2327,9 +2328,7 @@
             });
             
             localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(dataToSave));
-            console.log('Saved declined numbers to localStorage:', Object.keys(dataToSave).length, 'entries');
         } catch (e) {
-            console.log('Failed to save declined numbers:', e);
         }
     }
     
@@ -2355,10 +2354,7 @@
                 // Save back the cleaned data if we removed any old entries
                 if (Object.keys(validEntries).length !== Object.keys(data).length) {
                     localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(validEntries));
-                    console.log('Cleaned up old declined numbers entries');
                 }
-                
-                console.log('Loaded', Object.keys(validEntries).length, 'declined numbers from localStorage');
             }
         } catch (e) {
             console.log('Failed to load declined numbers:', e);
@@ -2377,18 +2373,14 @@
         
         if (!text) return;
         
-        console.log('Starting interactive number conversion...');
-        console.log('Finding convertible numbers using exact same protection logic as auto-convert');
+
         
         // Find convertible numbers using the same protection logic as convertNumbersToText
         const convertibleNumbers = findConvertibleNumbers(text);
         
         if (convertibleNumbers.length === 0) {
-            console.log('No convertible numbers found');
             return;
         }
-        
-        console.log('Found', convertibleNumbers.length, 'convertible numbers');
         processNumberConversionsInteractively(textEditor, convertibleNumbers, 0);
     }
     
@@ -2405,7 +2397,7 @@
         
         // 1. FIRST: Protect entire square bracket sections (highest priority)
         workingText = workingText.replace(/\[[^\]]*\]/g, function(match) {
-            console.log('Protecting square bracket section:', match);
+
             const placeholder = `__BRACKET_SECTION_${protectedIndex}__`;
             protectedRanges.push({ placeholder, original: match });
             protectedIndex++;
@@ -3930,6 +3922,39 @@
         // Pattern: <b>(content)</b> or <i>(content)</i> -> (<b>content</b>) or (<i>content</i>)
         fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, '(<$1>$2</$1>)');
         
+        // Handle edge case: <i>(content</i>) -> (<i>content</i>)
+        // Pattern: tag starts with parenthesis but closing parenthesis is outside the tag
+        fixedText = fixedText.replace(/<(b|i)>\(([^<]*)<\/\1>\)/gi, '(<$1>$2</$1>)');
+        
+        // Handle edge case: (<i>content)</i> -> (<i>content</i>)
+        // Pattern: opening parenthesis is outside tag but closing parenthesis is inside the tag
+        fixedText = fixedText.replace(/\(<(b|i)>([^<]*)\)<\/\1>/gi, '(<$1>$2</$1>)');
+        
+        // Handle edge case: mixed parentheses with tags
+        // Pattern: (<i>content</i>) -> (<i>content</i>) (already correct, but clean up any malformed versions)
+        // This handles cases like: (<i>text) followed by </i> somewhere else
+        fixedText = fixedText.replace(/\(<(b|i)>([^<)]+)\)([^<]*)<\/\1>/gi, function(match, tag, content, afterParen) {
+            // If there's content after the closing parenthesis but before the closing tag, 
+            // it means the parenthesis should be moved outside
+            if (afterParen.trim() === '') {
+                return `(<${tag}>${content}</${tag}>)`;
+            }
+            return match; // Don't change if there's actual content after the parenthesis
+        });
+        
+        // Handle the reverse case: <i>content)</i> where opening paren is missing or outside
+        // This catches orphaned closing parentheses inside tags and moves them outside
+        fixedText = fixedText.replace(/<(b|i)>([^<(]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
+            // Check if there's an opening parenthesis before this tag in a reasonable range
+            const beforeTag = string.substring(Math.max(0, offset - 50), offset);
+            if (beforeTag.includes('(')) {
+                // There's a parenthesis before, so move the closing one outside
+                return `<${tag}>${content}</${tag}>)`;
+            }
+            // No matching opening parenthesis found, leave as is or wrap completely
+            return `(<${tag}>${content}</${tag}>)`;
+        });
+        
             console.log('After parentheses fixes:', fixedText.includes('(<b>') || fixedText.includes('(<i>') ? 'FOUND FIXED PARENTHESES' : 'NO PARENTHESES FIXES APPLIED');
         }
 
@@ -3962,6 +3987,8 @@
             // Pattern: spaces or tabs at the end of lines (before newlines)
             fixedText = fixedText.replace(/[ \t]+$/gm, '');
         }
+
+
 
         // Apply custom regex rules BEFORE number conversion
         if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
@@ -4433,6 +4460,12 @@
     function handleTextSelection() {
         console.log('Text selection event triggered');
         
+        // Only show format popup on lyrics pages
+        if (!isOnLyricsPage()) {
+            console.log('Not on a lyrics page, skipping text formatting');
+            return;
+        }
+        
         // Clear any pending hide timeout
         if (popupTimeout) {
             clearTimeout(popupTimeout);
@@ -4596,23 +4629,12 @@
             autoFixButton = createAutoFixButton();
             const zwsButton = createZeroWidthSpaceButton();
             
-            // Create a container div for the main buttons (em dash and auto fix)
-            const mainButtonContainer = document.createElement('div');
-            mainButtonContainer.style.cssText = `
-                display: flex;
-                align-items: center;
-                margin-bottom: 0.5rem;
-            `;
+            // Create containers using utility
+            const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
             mainButtonContainer.appendChild(toggleButton);
             mainButtonContainer.appendChild(autoFixButton);
             
-            // Create a container div for the zero-width space button (smaller, separate line)
-            const zwsButtonContainer = document.createElement('div');
-            zwsButtonContainer.style.cssText = `
-                display: flex;
-                align-items: center;
-                margin-bottom: 0.5rem;
-            `;
+            const zwsButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
             zwsButtonContainer.appendChild(zwsButton);
             
             // Look for the "How to Format Lyrics" section to insert before it
@@ -4673,7 +4695,9 @@
         document.addEventListener('focus', (e) => {
             const target = e.target;
             // Check if focusing on lyrics editor specifically
-            const isLyricsEditor = target.closest('[class*="LyricsEdit"]') && 
+            // First ensure target is an Element and has the closest method
+            const isLyricsEditor = target && target.closest && target.matches &&
+                                  target.closest('[class*="LyricsEdit"]') && 
                                   (target.matches('textarea') || target.isContentEditable);
 
             if (isLyricsEditor) {
@@ -4825,23 +4849,12 @@
                     autoFixButton = createAutoFixButton();
                     const zwsButton = createZeroWidthSpaceButton();
                     
-                    // Create container for main buttons
-                    const mainButtonContainer = document.createElement('div');
-                    mainButtonContainer.style.cssText = `
-                        display: flex;
-                        align-items: center;
-                        margin-bottom: 0.5rem;
-                    `;
+                    // Create containers using utility
+                    const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
                     mainButtonContainer.appendChild(toggleButton);
                     mainButtonContainer.appendChild(autoFixButton);
                     
-                    // Create container for zero-width space button
-                    const zwsButtonContainer = document.createElement('div');
-                    zwsButtonContainer.style.cssText = `
-                        display: flex;
-                        align-items: center;
-                        margin-bottom: 0.5rem;
-                    `;
+                    const zwsButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
                     zwsButtonContainer.appendChild(zwsButton);
                     
                     // Try to insert at the top of the container
@@ -4908,6 +4921,8 @@
         });
     }
 
+
+    
     // Wait for DOM to be ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
