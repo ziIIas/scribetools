@@ -3766,7 +3766,7 @@
         
         // Words that need apostrophes at the beginning (but only in certain contexts)
         // 'til (until)
-        fixedText = fixedText.replace(/\btil\b(?!')/gi, function(match) {
+        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\btil\b(?!')/gi, function(match) {
             if (match === 'TIL') return "'TIL";
             if (match === 'Til') return "'Til";
             return "'til";
@@ -3787,13 +3787,13 @@
             // If there's already an apostrophe, don't add another one
             const apostrophe = existingApostrophe ? '' : "'";
             
-            if (match === "'CUZ" || match === "CUZ") return apostrophe + "CAUSE";
-            if (match === "'Cuz" || match === "Cuz") return apostrophe + "Cause";
+            if (match === "'CUZ" || match === "CUZ") return apostrophe + "cause";
+            if (match === "'Cuz" || match === "Cuz") return apostrophe + "cause";
             return apostrophe + "cause";
         });
         
         // 'bout (about)
-        fixedText = fixedText.replace(/\bbout\b(?!')/gi, function(match) {
+        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bbout\b(?!')/gi, function(match) {
             if (match === 'BOUT') return "'BOUT";
             if (match === 'Bout') return "'Bout";
             return "'bout";
@@ -4663,6 +4663,22 @@
         return false;
     }
 
+    // Function to remove the "How to Format Lyrics" div
+    function removeFormatExplainerDiv() {
+        // Look for the div containing "How to Format Lyrics" text
+        const explainerDivs = document.querySelectorAll('div');
+        explainerDivs.forEach(div => {
+            if (div.textContent && div.textContent.includes('How to Format Lyrics:')) {
+                // Check if it matches the specific structure with flex styling
+                const style = div.getAttribute('style') || '';
+                if (style.includes('display: flex') && style.includes('flex-direction: row')) {
+                    console.log('Removing "How to Format Lyrics" explainer div');
+                    div.remove();
+                }
+            }
+        });
+    }
+
     // Function to initialize the userscript
     function init() {
         // Only run on Genius pages
@@ -4673,6 +4689,15 @@
         // Immediate cleanup of any lingering highlights from previous sessions
         console.log('Initializing: cleaning up any existing highlights...');
         removeNumberHighlight(null);
+
+        // Remove the "How to Format Lyrics" explainer div
+        removeFormatExplainerDiv();
+        
+        // Set up observer to remove the div if it appears later
+        const observer = new MutationObserver(() => {
+            removeFormatExplainerDiv();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
 
         // Reset restore prompt flag for new page
         hasShownRestorePrompt = false;
