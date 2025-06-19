@@ -1,0 +1,73 @@
+{
+  "metadata": {
+    "author": "ziIIas",
+    "title": "zilla's Rules",
+    "description": "Misc. rules for text processing and corrections",
+    "id": "1",
+    "version": "1"
+  },
+  "rules": [
+    {
+      "description": "Capitalize backwood",
+      "find": "\\bbackwood(s?)\\b",
+      "replace": "Backwood$1",
+      "flags": "ge",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "dat -> that",
+      "find": "\\bdat\\b",
+      "replace": "that",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Capitalize looseleaf",
+      "find": "\\blooseleaf\\b",
+      "replace": "LooseLeaf",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Curly double quotes -> straight double quotes",
+      "find": "[\\u201c\\u201d]",
+      "replace": "\"",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "za/Za -> 'za or 'Za",
+      "find": "\\b([Zz]a)\\b",
+      "replace": "'$1",
+      "flags": "ge",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Curly apostrophes -> straight apostrophes",
+      "find": "[\\u2018\\u2019]",
+      "replace": "'",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "ur -> your",
+      "find": "\\bur\\b",
+      "replace": "your",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Capitalize cali",
+      "find": "\\bcali\\b",
+      "replace": "Cali",
+      "flags": "ge",
+      "enabled": true,
+      "enhancedBoundary": true
+    }
+  ]
+} 
