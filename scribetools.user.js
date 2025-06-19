@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      3.0
+// @version      4.0
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -44,7 +44,11 @@
         numberToText: 'ask', // Options: 'off', 'ask', 'on' - default to 'ask' for user control
         customRegex: true,
         customRegexRules: [], // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
-        emDashEnabled: false // Save em dash toggle state
+        emDashEnabled: false, // Save em dash toggle state
+        emDashMode: '3', // Options: '2' for --, '3' for --- (default is 3)
+        // New rule groups structure
+        ruleGroups: [], // Array of {id: string, title: string, description: string, author: string, version: string, rules: array}
+        ungroupedRules: [] // Rules not assigned to any group
     };
 
 
@@ -342,7 +346,7 @@
                 e.stopPropagation();
                 onDelete(index);
             }, {
-                styles: { fontSize: '12px', padding: '4px 8px' }
+                styles: { fontSize: '10px', padding: '2px 6px', height: 'auto' }
             });
             
             header.appendChild(enabledCheckbox);
@@ -368,8 +372,13 @@
                 }
             }
             
+            let enhancedBoundaryText = '';
+            if (rule.enhancedBoundary && rule.flags && rule.flags.includes('e')) {
+                enhancedBoundaryText = ' <span style="color: #007bff; font-weight: bold;">[Enhanced Boundary]</span>';
+            }
+            
             details.innerHTML = `
-                <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
+                <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}${enhancedBoundaryText}</div>
                 <div><strong>Replace:</strong> ${replaceText}</div>
             `;
             ruleDiv.appendChild(details);
@@ -582,6 +591,13 @@
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
             { key: 'multipleSpaces', label: 'Fix spacing (multiple spaces → single, remove trailing)', type: 'checkbox' },
             { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
+            { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja-)', type: 'checkbox' },
+            { key: 'emDashMode', label: 'Multiple dashes → emdash (—)', type: 'dropdown',
+                options: [
+                    { value: '2', label: 'Two dashes (--)' },
+                    { value: '3', label: 'Three dashes (---)' }
+                ]
+              },
             { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown', 
               options: [
                   { value: 'off', label: 'Off' },
@@ -701,30 +717,37 @@
     function createCustomRulesContent() {
         const content = document.createElement('div');
 
-                 // All buttons on same line
+        // All buttons on same line
         const buttonContainer = document.createElement('div');
         buttonContainer.style.cssText = `
             display: flex;
-            gap: 8px;
+            gap: 6px;
             margin-bottom: 20px;
+            flex-wrap: wrap;
+            align-items: center;
         `;
 
-        const addRuleBtn = createSmallButton('+ Add Rule', () => {
+        const addRuleBtn = createSmallButton('+ Add', () => {
             const form = document.getElementById('add-rule-form');
             const isVisible = form.style.display !== 'none';
             form.style.display = isVisible ? 'none' : 'block';
             addRuleBtn.textContent = isVisible ? '+ Add Rule' : 'Cancel';
         });
         
-        const searchBtn = createSmallButton('Search Rules', () => {
+        const searchBtn = createSmallButton('Search', () => {
             showRuleSearchPopup();
         });
         
+        const downloadBtn = createSmallButton('Download', () => {
+            showDownloadRulesPopup();
+        });
+        
         const importBtn = createImportDropdown();
-        const exportBtn = createSmallButton('Export Rules', exportRegexRules);
+        const exportBtn = createSmallButton('Export', exportRegexRules);
 
         buttonContainer.appendChild(addRuleBtn);
         buttonContainer.appendChild(searchBtn);
+        buttonContainer.appendChild(downloadBtn);
         buttonContainer.appendChild(importBtn);
         buttonContainer.appendChild(exportBtn);
         content.appendChild(buttonContainer);
@@ -742,8 +765,8 @@
         rulesContainer.id = 'custom-regex-rules-container';
         content.appendChild(rulesContainer);
 
-        // Load existing rules
-        refreshCustomRegexRules(rulesContainer);
+        // Load existing rules and groups
+        refreshCustomRegexRulesWithGroups(rulesContainer);
 
         return content;
     }
@@ -781,10 +804,48 @@
         const replaceField = createFormField('Replace With', 'text', '');
         const flagsField = createFormField('Flags (optional)', 'text', 'gi');
 
+        // Enhanced boundary checkbox
+        const enhancedBoundaryContainer = document.createElement('div');
+        enhancedBoundaryContainer.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+        `;
+
+        const enhancedBoundaryCheckbox = document.createElement('input');
+        enhancedBoundaryCheckbox.type = 'checkbox';
+        enhancedBoundaryCheckbox.id = 'enhanced-boundary-checkbox';
+        enhancedBoundaryCheckbox.title = 'Enhanced boundaries recognize brackets, punctuation, em dashes, and more as word boundaries. Simplifies complex regex patterns like lookarounds.';
+        enhancedBoundaryCheckbox.style.cssText = `
+            margin: 0;
+            cursor: pointer;
+        `;
+
+        const enhancedBoundaryLabel = document.createElement('label');
+        enhancedBoundaryLabel.setAttribute('for', 'enhanced-boundary-checkbox');
+        enhancedBoundaryLabel.innerHTML = `
+            <strong>Enhanced Boundary Mode</strong> - Automatically handles brackets, punctuation, etc. 
+            <br><span style="font-size: 12px; color: #666; font-style: italic;">
+            Add "e" to flags and use simple patterns like "\\bza\\b" instead of complex lookarounds
+            </span>
+        `;
+        enhancedBoundaryLabel.style.cssText = `
+            font-size: 14px;
+            cursor: pointer;
+            color: #333;
+            line-height: 1.4;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        enhancedBoundaryContainer.appendChild(enhancedBoundaryCheckbox);
+        enhancedBoundaryContainer.appendChild(enhancedBoundaryLabel);
+
         fieldsContainer.appendChild(descriptionField);
         fieldsContainer.appendChild(findField);
         fieldsContainer.appendChild(replaceField);
         fieldsContainer.appendChild(flagsField);
+        fieldsContainer.appendChild(enhancedBoundaryContainer);
         form.appendChild(fieldsContainer);
 
         // Buttons
@@ -798,31 +859,42 @@
             const description = descriptionField.querySelector('input').value;
             const find = findField.querySelector('input').value;
             const replace = replaceField.querySelector('input').value;
-            const flags = flagsField.querySelector('input').value || 'gi';
+            let flags = flagsField.querySelector('input').value || 'gi';
+            const enhancedBoundary = enhancedBoundaryCheckbox.checked;
 
             if (!description || !find) {
                 alert('Description and Find Pattern are required.');
                 return;
             }
 
+            // If enhanced boundary is enabled, ensure 'e' is in flags
+            if (enhancedBoundary && !flags.includes('e')) {
+                flags += 'e';
+            }
+
             try {
-                // Test the regex
-                new RegExp(find, flags);
+                // Test the regex (remove 'e' for testing since it's not a standard flag)
+                const testFlags = flags.replace(/e/g, '');
+                new RegExp(find, testFlags);
             } catch (e) {
                 alert('Invalid regex pattern: ' + e.message);
                 return;
             }
 
-            const newRule = { description, find, replace, flags, enabled: true };
-            autoFixSettings.customRegexRules.push(newRule);
+            const newRule = { description, find, replace, flags, enabled: true, enhancedBoundary };
+            if (!autoFixSettings.ungroupedRules) {
+                autoFixSettings.ungroupedRules = [];
+            }
+            autoFixSettings.ungroupedRules.push(newRule);
             saveSettings();
-            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+            refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             
             // Clear form and hide it
             descriptionField.querySelector('input').value = '';
             findField.querySelector('input').value = '';
             replaceField.querySelector('input').value = '';
             flagsField.querySelector('input').value = 'gi';
+            enhancedBoundaryCheckbox.checked = false;
             form.style.display = 'none';
             
                          // Reset button text - find the correct add rule button
@@ -904,7 +976,7 @@
             gap: 8px;
         `;
 
-        const importBtn = createSmallButton('Import Rules', () => {
+        const importBtn = createSmallButton('Import', () => {
             const jsonText = textArea.value.trim();
             if (!jsonText) {
                 alert('Please paste your JSON rules first.');
@@ -969,19 +1041,41 @@
     function createSmallButton(text, clickHandler) {
         return UI.createButton(text, clickHandler, {
             styles: {
-                fontSize: '12px',
-                padding: '6px 12px'
+                fontSize: '11px',
+                padding: '5px 10px',
+                whiteSpace: 'nowrap'
             }
         });
     }
 
-    // Function to refresh the custom regex rules display
-    function refreshCustomRegexRules(container) {
+    // Function to refresh the custom regex rules display with groups
+    function refreshCustomRegexRulesWithGroups(container) {
         container.innerHTML = '';
         
-        if (!autoFixSettings.customRegexRules || autoFixSettings.customRegexRules.length === 0) {
-                         const noRulesMsg = document.createElement('div');
-            noRulesMsg.textContent = 'No custom regex rules yet. Click "Add Rule" to create one.';
+        // Migrate old customRegexRules to ungroupedRules if needed
+        if (autoFixSettings.customRegexRules && autoFixSettings.customRegexRules.length > 0) {
+            if (!autoFixSettings.ungroupedRules) {
+                autoFixSettings.ungroupedRules = [];
+            }
+            // Move existing rules to ungrouped, avoiding duplicates
+            autoFixSettings.customRegexRules.forEach(rule => {
+                const isDuplicate = autoFixSettings.ungroupedRules.some(existingRule => 
+                    existingRule.find === rule.find && existingRule.replace === rule.replace
+                );
+                if (!isDuplicate) {
+                    autoFixSettings.ungroupedRules.push(rule);
+                }
+            });
+            autoFixSettings.customRegexRules = []; // Clear old array
+            saveSettings();
+        }
+
+        const hasAnyRules = (autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0) ||
+                           (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0);
+        
+        if (!hasAnyRules) {
+            const noRulesMsg = document.createElement('div');
+            noRulesMsg.textContent = 'No custom regex rules yet. Click "Add Rule" to create one or "Download Rules" to import rule groups.';
             noRulesMsg.style.cssText = `
                 color: #6c757d;
                 font-style: italic;
@@ -994,10 +1088,419 @@
             return;
         }
 
-        autoFixSettings.customRegexRules.forEach((rule, index) => {
-            const ruleElement = createRegexRuleElement(rule, index);
-            container.appendChild(ruleElement);
+        // Display rule groups
+        if (autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0) {
+            autoFixSettings.ruleGroups.forEach((group, groupIndex) => {
+                const groupContainer = createRuleGroupElement(group, groupIndex);
+                container.appendChild(groupContainer);
+            });
+        }
+
+        // Display ungrouped rules
+        if (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0) {
+            const ungroupedContainer = createUngroupedRulesElement();
+            container.appendChild(ungroupedContainer);
+        }
+    }
+
+    // Function to create a rule group element
+    function createRuleGroupElement(group, groupIndex) {
+        const groupContainer = document.createElement('div');
+        groupContainer.style.cssText = `
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            background: #fff;
+        `;
+
+        // Group header
+        const groupHeader = document.createElement('div');
+        groupHeader.style.cssText = `
+            background: #f8f9fa;
+            padding: 12px 16px;
+            border-bottom: 1px solid #dee2e6;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: relative;
+        `;
+
+        const groupInfo = document.createElement('div');
+        groupInfo.style.cssText = `
+            flex: 1;
+        `;
+
+        const groupTitle = document.createElement('div');
+        groupTitle.textContent = group.title;
+        groupTitle.style.cssText = `
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 4px;
+        `;
+
+        const groupMeta = document.createElement('div');
+        groupMeta.innerHTML = `
+            <span style="font-size: 12px; color: #666;">${group.description}</span>
+            <br>
+            <span style="font-size: 11px; color: #999;">Author: ${group.author} | Version: ${group.version} | ${group.rules.length} rule${group.rules.length === 1 ? '' : 's'}</span>
+        `;
+
+        // Create delete group button - positioned absolutely at top-right
+        const deleteGroupBtn = createSmallButton('Delete Group', () => {
+            if (confirm(`Are you sure you want to delete the group "${group.title}" and all its rules?`)) {
+                autoFixSettings.ruleGroups.splice(groupIndex, 1);
+                saveSettings();
+                refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+            }
         });
+        
+        // Set base styles for delete button with absolute positioning
+        deleteGroupBtn.style.backgroundColor = '#dc3545';
+        deleteGroupBtn.style.color = 'white';
+        deleteGroupBtn.style.borderColor = '#dc3545';
+        deleteGroupBtn.style.fontSize = '10px';
+        deleteGroupBtn.style.padding = '2px 6px';
+        deleteGroupBtn.style.position = 'absolute';
+        deleteGroupBtn.style.top = '8px';
+        deleteGroupBtn.style.right = '8px';
+        deleteGroupBtn.style.zIndex = '10';
+        
+        // Add proper hover effect using the UI utility
+        UI.addHoverEffect(deleteGroupBtn, {
+            backgroundColor: '#c82333',
+            borderColor: '#bd2130'
+        }, {
+            backgroundColor: '#dc3545',
+            color: 'white',
+            borderColor: '#dc3545'
+        });
+
+        const toggleIcon = document.createElement('span');
+        toggleIcon.innerHTML = '▼';
+        toggleIcon.style.cssText = `
+            font-size: 12px;
+            color: #666;
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        `;
+
+        groupInfo.appendChild(groupTitle);
+        groupInfo.appendChild(groupMeta);
+        
+        groupHeader.appendChild(groupInfo);
+        groupHeader.appendChild(toggleIcon);
+        groupHeader.appendChild(deleteGroupBtn);
+
+        // Group actions (initially hidden) - now empty since delete button moved to header
+        const groupActions = document.createElement('div');
+        groupActions.style.cssText = `
+            padding: 8px 16px;
+            background: #f8f9fa;
+            border-top: 1px solid #dee2e6;
+            display: none;
+            gap: 8px;
+            flex-wrap: wrap;
+        `;
+
+        // Delete button is now in the header, so this section can be used for future actions if needed
+
+        // Rules container (initially hidden)
+        const rulesContainer = document.createElement('div');
+        rulesContainer.style.cssText = `
+            display: none;
+            padding: 0;
+        `;
+
+        // Toggle functionality - only for the group info area and toggle icon, not the delete button
+        let isExpanded = false;
+        
+        const toggleHandler = (e) => {
+            // Don't toggle if the delete button was clicked
+            if (e.target === deleteGroupBtn || deleteGroupBtn.contains(e.target)) {
+                return;
+            }
+            
+            isExpanded = !isExpanded;
+            if (isExpanded) {
+                rulesContainer.style.display = 'block';
+                groupActions.style.display = 'flex';
+                toggleIcon.style.transform = 'rotate(-90deg)';
+                
+                // Load rules if not already loaded
+                if (rulesContainer.children.length === 0) {
+                    group.rules.forEach((rule, ruleIndex) => {
+                        const ruleElement = createGroupRuleElement(rule, groupIndex, ruleIndex, group.title);
+                        rulesContainer.appendChild(ruleElement);
+                    });
+                }
+            } else {
+                rulesContainer.style.display = 'none';
+                groupActions.style.display = 'none';
+                toggleIcon.style.transform = 'rotate(0deg)';
+            }
+        };
+        
+        groupHeader.addEventListener('click', toggleHandler);
+
+        groupContainer.appendChild(groupHeader);
+        groupContainer.appendChild(groupActions);
+        groupContainer.appendChild(rulesContainer);
+
+        return groupContainer;
+    }
+
+    // Function to create ungrouped rules element
+    function createUngroupedRulesElement() {
+        const ungroupedContainer = document.createElement('div');
+        ungroupedContainer.style.cssText = `
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            background: #fff;
+        `;
+
+        // Ungrouped header
+        const ungroupedHeader = document.createElement('div');
+        ungroupedHeader.style.cssText = `
+            background: #fff3cd;
+            padding: 12px 16px;
+            border-bottom: 1px solid #dee2e6;
+            border-radius: 8px 8px 0 0;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        `;
+
+        const ungroupedInfo = document.createElement('div');
+        ungroupedInfo.style.cssText = `
+            flex: 1;
+        `;
+
+        const ungroupedTitle = document.createElement('div');
+        ungroupedTitle.textContent = 'Unsorted Rules';
+        ungroupedTitle.style.cssText = `
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 4px;
+        `;
+
+        const ungroupedMeta = document.createElement('div');
+        ungroupedMeta.innerHTML = `
+            <span style="font-size: 12px; color: #666;">Rules not assigned to any group</span>
+            <br>
+            <span style="font-size: 11px; color: #999;">${autoFixSettings.ungroupedRules.length} rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}</span>
+        `;
+
+        const toggleIcon = document.createElement('span');
+        toggleIcon.innerHTML = '▼';
+        toggleIcon.style.cssText = `
+            font-size: 12px;
+            color: #666;
+            transition: transform 0.2s ease;
+        `;
+
+        ungroupedInfo.appendChild(ungroupedTitle);
+        ungroupedInfo.appendChild(ungroupedMeta);
+        ungroupedHeader.appendChild(ungroupedInfo);
+        ungroupedHeader.appendChild(toggleIcon);
+
+        // Rules container (initially hidden)
+        const rulesContainer = document.createElement('div');
+        rulesContainer.style.cssText = `
+            display: none;
+            padding: 0;
+        `;
+
+        // Toggle functionality
+        let isExpanded = false;
+        ungroupedHeader.addEventListener('click', () => {
+            isExpanded = !isExpanded;
+            if (isExpanded) {
+                rulesContainer.style.display = 'block';
+                toggleIcon.style.transform = 'rotate(-90deg)';
+                
+                // Load rules if not already loaded
+                if (rulesContainer.children.length === 0) {
+                    autoFixSettings.ungroupedRules.forEach((rule, ruleIndex) => {
+                        const ruleElement = createUngroupedRuleElement(rule, ruleIndex);
+                        rulesContainer.appendChild(ruleElement);
+                    });
+                }
+            } else {
+                rulesContainer.style.display = 'none';
+                toggleIcon.style.transform = 'rotate(0deg)';
+            }
+        });
+
+        ungroupedContainer.appendChild(ungroupedHeader);
+        ungroupedContainer.appendChild(rulesContainer);
+
+        return ungroupedContainer;
+    }
+
+    // Function to create a rule element within a group
+    function createGroupRuleElement(rule, groupIndex, ruleIndex, groupTitle) {
+        const ruleElement = UI.createRuleElement(rule, ruleIndex,
+            // onToggle
+            (idx, enabled) => {
+                autoFixSettings.ruleGroups[groupIndex].rules[idx].enabled = enabled;
+                saveSettings();
+            },
+            // onDelete
+            (idx) => {
+                autoFixSettings.ruleGroups[groupIndex].rules.splice(idx, 1);
+                saveSettings();
+                
+                // Just remove this rule element instead of refreshing everything
+                ruleElement.remove();
+                
+                // Update group count in header
+                const groupContainer = ruleElement.closest('div[style*="border: 1px solid #dee2e6"]');
+                const countSpan = groupContainer.querySelector('span[style*="font-size: 11px"]');
+                if (countSpan) {
+                    const newCount = autoFixSettings.ruleGroups[groupIndex].rules.length;
+                    const countText = `${newCount} rule${newCount === 1 ? '' : 's'}`;
+                    // Update the count part only (it's after the last | in the text)
+                    const fullText = countSpan.innerHTML;
+                    const parts = fullText.split(' | ');
+                    parts[parts.length - 1] = countText;
+                    countSpan.innerHTML = parts.join(' | ');
+                }
+                
+                // If no rules left in group, show empty message
+                const parentContainer = ruleElement.closest('div[style*="display: none"]').parentElement;
+                const rulesContainer = parentContainer.querySelector('div[style*="padding: 0"]');
+                if (rulesContainer && rulesContainer.children.length === 0) {
+                    const emptyMsg = document.createElement('div');
+                    emptyMsg.textContent = 'No rules in this group';
+                    emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
+                    rulesContainer.appendChild(emptyMsg);
+                }
+            }
+        );
+
+        // Add group indicator and move to ungrouped option
+        const ruleActions = ruleElement.querySelector('div > div'); // Button container
+        if (ruleActions) {
+            const moveBtn = createSmallButton('Move to Unsorted', () => {
+                // Move rule to ungrouped
+                const ruleToMove = autoFixSettings.ruleGroups[groupIndex].rules[ruleIndex];
+                if (!autoFixSettings.ungroupedRules) {
+                    autoFixSettings.ungroupedRules = [];
+                }
+                autoFixSettings.ungroupedRules.push(ruleToMove);
+                autoFixSettings.ruleGroups[groupIndex].rules.splice(ruleIndex, 1);
+                saveSettings();
+                
+                // Just remove this rule element instead of refreshing everything
+                ruleElement.remove();
+                
+                // Update group count in header
+                const groupContainer = ruleElement.closest('div[style*="border: 1px solid #dee2e6"]');
+                const countSpan = groupContainer.querySelector('span[style*="font-size: 11px"]');
+                if (countSpan) {
+                    const newCount = autoFixSettings.ruleGroups[groupIndex].rules.length;
+                    const countText = `${newCount} rule${newCount === 1 ? '' : 's'}`;
+                    // Update the count part only (it's after the last | in the text)
+                    const fullText = countSpan.innerHTML;
+                    const parts = fullText.split(' | ');
+                    parts[parts.length - 1] = countText;
+                    countSpan.innerHTML = parts.join(' | ');
+                }
+                
+                // Update ungrouped count if ungrouped section exists
+                const allContainers = document.querySelectorAll('div[style*="border: 1px solid #dee2e6"]');
+                allContainers.forEach(container => {
+                    const header = container.querySelector('div[style*="background: #fff3cd"]');
+                    if (header) { // This is the ungrouped container
+                        const ungroupedCountSpan = container.querySelector('span[style*="font-size: 11px"]');
+                        if (ungroupedCountSpan) {
+                            const newUngroupedCount = autoFixSettings.ungroupedRules.length;
+                            const ungroupedCountText = `${newUngroupedCount} rule${newUngroupedCount === 1 ? '' : 's'}`;
+                            ungroupedCountSpan.textContent = ungroupedCountText;
+                        }
+                    }
+                });
+                
+                // If no rules left in group, show empty message or collapse
+                const parentContainer = ruleElement.closest('div[style*="display: none"]').parentElement;
+                const rulesContainer = parentContainer.querySelector('div[style*="padding: 0"]');
+                if (rulesContainer && rulesContainer.children.length === 0) {
+                    const emptyMsg = document.createElement('div');
+                    emptyMsg.textContent = 'No rules in this group';
+                    emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
+                    rulesContainer.appendChild(emptyMsg);
+                }
+            });
+            moveBtn.style.fontSize = '10px';
+            moveBtn.style.padding = '2px 6px';
+            moveBtn.style.height = 'auto';
+            ruleActions.appendChild(moveBtn);
+        }
+
+        ruleElement.style.margin = '0';
+        ruleElement.style.borderRadius = '0';
+        ruleElement.style.borderLeft = 'none';
+        ruleElement.style.borderRight = 'none';
+        ruleElement.style.borderTop = 'none';
+
+        return ruleElement;
+    }
+
+    // Function to create a rule element for ungrouped rules
+    function createUngroupedRuleElement(rule, ruleIndex) {
+        const ruleElement = UI.createRuleElement(rule, ruleIndex,
+            // onToggle
+            (idx, enabled) => {
+                autoFixSettings.ungroupedRules[idx].enabled = enabled;
+                saveSettings();
+            },
+            // onDelete
+            (idx) => {
+                autoFixSettings.ungroupedRules.splice(idx, 1);
+                saveSettings();
+                
+                // Just remove this rule element instead of refreshing everything
+                ruleElement.remove();
+                
+                // Update ungrouped count in header
+                const ungroupedContainer = ruleElement.closest('div[style*="border: 1px solid #dee2e6"]');
+                const countSpan = ungroupedContainer.querySelector('span[style*="font-size: 11px"]');
+                if (countSpan) {
+                    const newCount = autoFixSettings.ungroupedRules.length;
+                    const countText = `${newCount} rule${newCount === 1 ? '' : 's'}`;
+                    countSpan.textContent = countText;
+                }
+                
+                // If no ungrouped rules left, show empty message or hide section
+                const parentContainer = ruleElement.closest('div[style*="display: none"]').parentElement;
+                const rulesContainer = parentContainer.querySelector('div[style*="padding: 0"]');
+                if (rulesContainer && rulesContainer.children.length === 0) {
+                    const emptyMsg = document.createElement('div');
+                    emptyMsg.textContent = 'No unsorted rules';
+                    emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
+                    rulesContainer.appendChild(emptyMsg);
+                }
+            }
+        );
+
+        ruleElement.style.margin = '0';
+        ruleElement.style.borderRadius = '0';
+        ruleElement.style.borderLeft = 'none';
+        ruleElement.style.borderRight = 'none';
+        ruleElement.style.borderTop = 'none';
+
+        return ruleElement;
+    }
+
+    // Function to refresh the custom regex rules display (legacy compatibility)
+    function refreshCustomRegexRules(container) {
+        refreshCustomRegexRulesWithGroups(container);
     }
 
     // Function to create a regex rule element
@@ -1060,7 +1563,7 @@
         // Create options
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
-        defaultOption.textContent = 'Import Rules';
+        defaultOption.textContent = 'Import';
         defaultOption.disabled = true;
         defaultOption.selected = true;
 
@@ -1294,6 +1797,428 @@
             },
             true // isSearchResult flag
         );
+    }
+
+    // Function to show download rules popup
+    function showDownloadRulesPopup() {
+        // Create backdrop
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10004';
+
+        // Create popup
+        const popup = UI.createPopup({
+            minWidth: '450px',
+            maxWidth: '600px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none'
+        });
+
+        // Create header
+        const header = UI.createPopupHeader('Download Rule Groups', () => {
+            document.body.removeChild(backdrop);
+        });
+        popup.appendChild(header);
+
+        // Loading message
+        const loadingMsg = document.createElement('div');
+        loadingMsg.textContent = 'Loading available rule groups...';
+        loadingMsg.style.cssText = `
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+        `;
+        popup.appendChild(loadingMsg);
+
+        // Content container (initially empty)
+        const contentContainer = document.createElement('div');
+        popup.appendChild(contentContainer);
+
+        backdrop.appendChild(popup);
+        popup.style.display = 'block';
+        document.body.appendChild(backdrop);
+
+        // Fetch rule groups from GitHub
+        fetchRuleGroups()
+            .then(groups => {
+                loadingMsg.remove();
+                displayRuleGroups(contentContainer, groups, backdrop);
+            })
+            .catch(error => {
+                loadingMsg.textContent = 'Failed to load rule groups: ' + error.message;
+                loadingMsg.style.color = '#d32f2f';
+            });
+    }
+
+    // Function to fetch rule groups from GitHub
+    async function fetchRuleGroups() {
+        const response = await fetch('https://raw.githubusercontent.com/ziIIas/scribetools/refs/heads/main/rules.json');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        
+        // Convert the single rule group format to our array format
+        return [{
+            id: data.metadata.id,
+            title: data.metadata.title,
+            description: data.metadata.description,
+            author: data.metadata.author,
+            version: data.metadata.version,
+            rules: data.rules
+        }];
+    }
+
+    // Function to display rule groups in the download popup
+    function displayRuleGroups(container, groups, backdrop) {
+        groups.forEach(group => {
+            const groupDiv = document.createElement('div');
+            groupDiv.style.cssText = `
+                border: 1px solid #dee2e6;
+                border-radius: 8px;
+                padding: 16px;
+                margin-bottom: 12px;
+                background: #f8f9fa;
+                cursor: pointer;
+                transition: background-color 0.2s ease;
+            `;
+
+            groupDiv.addEventListener('mouseenter', () => {
+                groupDiv.style.backgroundColor = '#e9ecef';
+            });
+
+            groupDiv.addEventListener('mouseleave', () => {
+                groupDiv.style.backgroundColor = '#f8f9fa';
+            });
+
+            const title = document.createElement('h4');
+            title.textContent = group.title;
+            title.style.cssText = `
+                margin: 0 0 8px 0;
+                font-size: 16px;
+                font-weight: 500;
+                color: #333;
+            `;
+
+            const description = document.createElement('p');
+            description.textContent = group.description;
+            description.style.cssText = `
+                margin: 0 0 12px 0;
+                font-size: 14px;
+                color: #666;
+                line-height: 1.4;
+            `;
+
+            const metadata = document.createElement('div');
+            metadata.style.cssText = `
+                font-size: 12px;
+                color: #999;
+                border-top: 1px solid #dee2e6;
+                padding-top: 8px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            `;
+
+            const metaInfo = document.createElement('span');
+            metaInfo.innerHTML = `Author: ${group.author} | ID: ${group.id} | Version: ${group.version}`;
+
+            const ruleCount = document.createElement('span');
+            ruleCount.textContent = `${group.rules.length} rule${group.rules.length === 1 ? '' : 's'}`;
+
+            metadata.appendChild(metaInfo);
+            metadata.appendChild(ruleCount);
+
+            groupDiv.appendChild(title);
+            groupDiv.appendChild(description);
+            groupDiv.appendChild(metadata);
+
+            groupDiv.addEventListener('click', () => {
+                showGroupRulesPopup(group, backdrop);
+            });
+
+            container.appendChild(groupDiv);
+        });
+    }
+
+    // Function to show individual rules within a group for selection
+    function showGroupRulesPopup(group, originalBackdrop) {
+        // Hide the original backdrop
+        originalBackdrop.style.display = 'none';
+
+        // Create new backdrop for group rules
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+                originalBackdrop.style.display = 'flex'; // Show original popup again
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10005';
+
+        const popup = UI.createPopup({
+            minWidth: '500px',
+            maxWidth: '700px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none',
+            maxHeight: '80vh',
+            overflowY: 'auto'
+        });
+
+        // Header with back button
+        const headerContainer = document.createElement('div');
+        headerContainer.style.cssText = `
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        `;
+
+        const backButton = document.createElement('button');
+        backButton.innerHTML = '← Back';
+        backButton.style.cssText = `
+            background: none;
+            border: 1px solid #dee2e6;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        `;
+        backButton.addEventListener('click', () => {
+            document.body.removeChild(backdrop);
+            originalBackdrop.style.display = 'flex';
+        });
+
+        const title = document.createElement('h3');
+        title.textContent = group.title;
+        title.style.cssText = `
+            margin: 0;
+            font-size: 18px;
+            font-weight: 400;
+            color: #333;
+        `;
+
+        const closeButton = UI.createCloseButton(() => {
+            document.body.removeChild(backdrop);
+            document.body.removeChild(originalBackdrop);
+        });
+
+        headerContainer.appendChild(backButton);
+        headerContainer.appendChild(title);
+        headerContainer.appendChild(closeButton);
+        popup.appendChild(headerContainer);
+
+        // Group info
+        const groupInfo = document.createElement('div');
+        groupInfo.style.cssText = `
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            color: #666;
+        `;
+        groupInfo.innerHTML = `
+            <div style="margin-bottom: 4px;"><strong>Description:</strong> ${group.description}</div>
+            <div><strong>Author:</strong> ${group.author} | <strong>Version:</strong> ${group.version} | <strong>Rules:</strong> ${group.rules.length}</div>
+        `;
+        popup.appendChild(groupInfo);
+
+        // Selection controls
+        const selectionControls = document.createElement('div');
+        selectionControls.style.cssText = `
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        `;
+
+        const selectAllBtn = createSmallButton('Select All', () => {
+            const checkboxes = popup.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = true);
+            updateDownloadButton();
+        });
+
+        const selectNoneBtn = createSmallButton('Select None', () => {
+            const checkboxes = popup.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = false);
+            updateDownloadButton();
+        });
+
+        const downloadSelectedBtn = createSmallButton('Download Selected', () => {
+            downloadSelectedRules();
+        });
+        downloadSelectedBtn.style.backgroundColor = '#007bff';
+        downloadSelectedBtn.style.color = 'white';
+        downloadSelectedBtn.style.borderColor = '#007bff';
+        downloadSelectedBtn.disabled = true;
+        downloadSelectedBtn.style.opacity = '0.6';
+
+        selectionControls.appendChild(selectAllBtn);
+        selectionControls.appendChild(selectNoneBtn);
+        selectionControls.appendChild(downloadSelectedBtn);
+        popup.appendChild(selectionControls);
+
+        // Rules container
+        const rulesContainer = document.createElement('div');
+        rulesContainer.style.cssText = `
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            background: #fff;
+        `;
+
+        // Display rules with checkboxes
+        group.rules.forEach((rule, index) => {
+            const ruleDiv = document.createElement('div');
+            ruleDiv.style.cssText = `
+                display: flex;
+                padding: 12px;
+                border-bottom: 1px solid #f0f0f0;
+                align-items: flex-start;
+                gap: 12px;
+            `;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `rule-${index}`;
+            checkbox.style.cssText = `
+                margin-top: 2px;
+                cursor: pointer;
+            `;
+            checkbox.addEventListener('change', updateDownloadButton);
+
+            const ruleContent = document.createElement('div');
+            ruleContent.style.cssText = `
+                flex: 1;
+                min-width: 0;
+            `;
+
+            const ruleTitle = document.createElement('div');
+            ruleTitle.textContent = rule.description || `Rule ${index + 1}`;
+            ruleTitle.style.cssText = `
+                font-weight: 500;
+                margin-bottom: 6px;
+                color: #333;
+            `;
+
+            const ruleDetails = document.createElement('div');
+            ruleDetails.style.cssText = `
+                font-size: 12px;
+                color: #666;
+                font-family: monospace;
+                background: #f8f9fa;
+                padding: 6px;
+                border-radius: 4px;
+            `;
+
+            let replaceText = typeof rule.replace === 'string' ? rule.replace : 
+                             typeof rule.replace === 'function' ? '[Function]' : rule.replace;
+            
+            let enhancedBoundaryText = '';
+            if (rule.enhancedBoundary && rule.flags && rule.flags.includes('e')) {
+                enhancedBoundaryText = ' <span style="color: #007bff; font-weight: bold;">[Enhanced Boundary]</span>';
+            }
+
+            ruleDetails.innerHTML = `
+                <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}${enhancedBoundaryText}</div>
+                <div><strong>Replace:</strong> ${replaceText}</div>
+            `;
+
+            ruleContent.appendChild(ruleTitle);
+            ruleContent.appendChild(ruleDetails);
+
+            ruleDiv.appendChild(checkbox);
+            ruleDiv.appendChild(ruleContent);
+            rulesContainer.appendChild(ruleDiv);
+        });
+
+        popup.appendChild(rulesContainer);
+
+        function updateDownloadButton() {
+            const checkboxes = popup.querySelectorAll('input[type="checkbox"]');
+            const selectedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+            
+            downloadSelectedBtn.disabled = selectedCount === 0;
+            downloadSelectedBtn.style.opacity = selectedCount === 0 ? '0.6' : '1';
+            downloadSelectedBtn.textContent = selectedCount === 0 ? 'Download Selected' : `Download ${selectedCount} Rule${selectedCount === 1 ? '' : 's'}`;
+        }
+
+        function downloadSelectedRules() {
+            const checkboxes = popup.querySelectorAll('input[type="checkbox"]');
+            const selectedRules = [];
+            
+            checkboxes.forEach((cb, index) => {
+                if (cb.checked) {
+                    selectedRules.push(group.rules[index]);
+                }
+            });
+
+            if (selectedRules.length === 0) {
+                alert('No rules selected.');
+                return;
+            }
+
+            // Check if group already exists
+            const existingGroupIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id);
+            
+            if (existingGroupIndex >= 0) {
+                // Update existing group
+                const existingGroup = autoFixSettings.ruleGroups[existingGroupIndex];
+                const newRules = selectedRules.filter(newRule => 
+                    !existingGroup.rules.some(existingRule => 
+                        existingRule.find === newRule.find && existingRule.replace === newRule.replace
+                    )
+                );
+                
+                if (newRules.length > 0) {
+                    existingGroup.rules.push(...newRules);
+                    existingGroup.version = group.version; // Update version
+                }
+                
+                alert(`Added ${newRules.length} new rule${newRules.length === 1 ? '' : 's'} to existing group "${group.title}".`);
+            } else {
+                // Create new group
+                autoFixSettings.ruleGroups.push({
+                    id: group.id,
+                    title: group.title,
+                    description: group.description,
+                    author: group.author,
+                    version: group.version,
+                    rules: selectedRules
+                });
+                
+                alert(`Downloaded ${selectedRules.length} rule${selectedRules.length === 1 ? '' : 's'} in new group "${group.title}".`);
+            }
+
+            saveSettings();
+            refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+            
+            // Close popups
+            document.body.removeChild(backdrop);
+            document.body.removeChild(originalBackdrop);
+        }
+
+        backdrop.appendChild(popup);
+        popup.style.display = 'block';
+        document.body.appendChild(backdrop);
     }
 
     // Function to toggle settings popup
@@ -1727,76 +2652,152 @@
         isEditing = false;
     }
 
+    // Common button styling constants
+    const BUTTON_STYLES = {
+        base: {
+            margin: '0',
+            padding: '0.375rem 0.75rem',
+            backgroundColor: 'transparent',
+            border: '1px solid #ccc',
+            borderRadius: '0.25rem',
+            color: '#666',
+            fontWeight: '400',
+            fontFamily: "'HelveticaNeue', Arial, sans-serif",
+            fontSize: '0.875rem',
+            lineHeight: '1.1',
+            cursor: 'pointer',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            MozUserSelect: 'none',
+            msUserSelect: 'none',
+            outline: 'none',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden'
+        },
+        container: {
+            height: '32px',
+            display: 'flex',
+            alignItems: 'center',
+            border: '1px solid #ccc',
+            borderRadius: '0.25rem',
+            overflow: 'hidden',
+            backgroundColor: '#fff'
+        },
+        innerButton: {
+            padding: '0.375rem 0.5rem',
+            backgroundColor: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+            fontSize: '0.875rem',
+            fontWeight: 'bold',
+            color: '#666',
+            width: '28px',
+            height: '28px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: '0'
+        }
+    };
+
     // Function to create the zero-width space button
     function createZeroWidthSpaceButton() {
         const button = document.createElement('button');
-        button.innerHTML = 'Copy Zero-Width Space';
+        button.innerHTML = 'Zero-Width Space';
         button.title = 'Copy a zero-width space (​) to clipboard - useful for spacing fixes';
         button.id = 'genius-zws-button';
         button.type = 'button';
         
+        // Track timeout to prevent multiple overlapping feedback
+        let feedbackTimeout = null;
+        
         // Style to match Genius small buttons (like Edit Metadata button)
         button.className = 'SmallButton__Container-sc-70651651-0 gsusny';
         
-        // Additional custom styling to match the small button style
-        button.style.cssText = `
-            margin-bottom: 0.5rem;
-            background-color: transparent;
-            border: 1px solid #ccc;
-            color: #666;
-            font-weight: 400;
-            font-family: 'HelveticaNeue', Arial, sans-serif;
-            font-size: 0.875rem;
-            line-height: 1.1;
-            padding: 0.375rem 0.75rem;
-            border-radius: 0.25rem;
-            cursor: pointer;
-            min-width: auto;
-            display: inline-block;
-            position: relative;
+        // Apply base button styles
+        Object.assign(button.style, BUTTON_STYLES.base, {
+            marginBottom: '0.5rem',
+            minWidth: 'auto',
+            maxWidth: '200px',
+            display: 'inline-block',
+            position: 'relative',
+            flexShrink: '1'
+        });
+
+        // Add CSS with forced background override and consistent styling
+        const style = document.createElement('style');
+        style.textContent = `
+            #genius-zws-button {
+                user-select: none !important;
+                -webkit-user-select: none !important;
+                -moz-user-select: none !important;
+                -ms-user-select: none !important;
+                background-color: transparent !important;
+                background: transparent !important;
+            }
+            #genius-zws-button:not(.genius-copied-state):hover {
+                background-color: #f5f5f5 !important;
+                background: #f5f5f5 !important;
+                border-color: #ccc !important;
+            }
+            #genius-zws-button.genius-copied-state {
+                background-color: #10b981 !important;
+                background: #10b981 !important;
+                border-color: #10b981 !important;
+            }
         `;
-
-        // Add hover effects
-        button.addEventListener('mouseenter', function() {
-            button.style.backgroundColor = '#f5f5f5';
-            button.style.borderColor = '#999';
-        });
-
-        button.addEventListener('mouseleave', function() {
-            button.style.backgroundColor = 'transparent';
-            button.style.borderColor = '#ccc';
-        });
+        document.head.appendChild(style);
+        
+        // Prevent selection with events
+        button.onselectstart = function() { return false; };
+        button.onmousedown = function(e) { 
+            if (e.detail > 1) { // Prevent multiple clicks
+                e.preventDefault();
+                return false;
+            }
+        };
 
         // Copy zero-width space to clipboard
         button.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
             
+            // Prevent multiple clicks during feedback
+            if (feedbackTimeout) {
+                return;
+            }
+            
             const zeroWidthSpace = '​'; // This is U+200B zero-width space
             
             // Try to copy to clipboard
             try {
                 navigator.clipboard.writeText(zeroWidthSpace).then(() => {
-                    // Success feedback
+                    // Success feedback with timer
                     const originalText = button.innerHTML;
+                    const originalBgColor = button.style.backgroundColor;
+                    const originalBorderColor = button.style.borderColor;
+                    const originalTextColor = button.style.color;
+                    
                     button.innerHTML = 'Copied!';
-                    button.style.backgroundColor = '#10b981';
+                    button.classList.add('genius-copied-state');
                     button.style.borderColor = '#10b981';
                     button.style.color = '#fff';
                     
-                    setTimeout(() => {
+                    feedbackTimeout = setTimeout(() => {
                         button.innerHTML = originalText;
-                        button.style.backgroundColor = 'transparent';
-                        button.style.borderColor = '#ccc';
-                        button.style.color = '#666';
-                    }, 1000);
+                        button.classList.remove('genius-copied-state');
+                        button.style.borderColor = originalBorderColor;
+                        button.style.color = originalTextColor;
+                        feedbackTimeout = null;
+                    }, 2000);
                 }).catch(() => {
                     // Fallback method
-                    fallbackCopyToClipboard(zeroWidthSpace, button);
+                    fallbackCopyToClipboard(zeroWidthSpace, button, feedbackTimeout);
                 });
             } catch (e) {
                 // Fallback method
-                fallbackCopyToClipboard(zeroWidthSpace, button);
+                fallbackCopyToClipboard(zeroWidthSpace, button, feedbackTimeout);
             }
         });
 
@@ -1804,7 +2805,7 @@
     }
 
     // Fallback clipboard copy method
-    function fallbackCopyToClipboard(text, button) {
+    function fallbackCopyToClipboard(text, button, feedbackTimeoutRef = null) {
         const textArea = document.createElement('textarea');
         textArea.value = text;
         textArea.style.position = 'fixed';
@@ -1816,28 +2817,378 @@
         
         try {
             document.execCommand('copy');
-            // Success feedback
+            // Success feedback with timer
             const originalText = button.innerHTML;
+            const originalBgColor = button.style.backgroundColor;
+            const originalBorderColor = button.style.borderColor;
+            const originalTextColor = button.style.color;
+            
             button.innerHTML = 'Copied!';
-            button.style.backgroundColor = '#10b981';
+            button.classList.add('genius-copied-state');
             button.style.borderColor = '#10b981';
             button.style.color = '#fff';
             
-            setTimeout(() => {
-                button.innerHTML = originalText;
-                button.style.backgroundColor = 'transparent';
-                button.style.borderColor = '#ccc';
-                button.style.color = '#666';
-            }, 1000);
+            if (feedbackTimeoutRef) {
+                feedbackTimeoutRef = setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.classList.remove('genius-copied-state');
+                    button.style.borderColor = originalBorderColor;
+                    button.style.color = originalTextColor;
+                    feedbackTimeoutRef = null;
+                }, 2000);
+            } else {
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.classList.remove('genius-copied-state');
+                    button.style.borderColor = originalBorderColor;
+                    button.style.color = originalTextColor;
+                }, 2000);
+            }
         } catch (e) {
             // Error feedback
             button.innerHTML = 'Copy Failed';
-            setTimeout(() => {
-                button.innerHTML = 'Copy Zero-Width Space';
-            }, 1000);
+            if (feedbackTimeoutRef) {
+                feedbackTimeoutRef = setTimeout(() => {
+                    button.innerHTML = 'Zero-Width Space';
+                    feedbackTimeoutRef = null;
+                }, 2000);
+            } else {
+                setTimeout(() => {
+                    button.innerHTML = 'Zero-Width Space';
+                }, 2000);
+            }
         }
         
         document.body.removeChild(textArea);
+    }
+
+    // Global variable to store the last find/replace operation for undo
+    let lastFindReplaceOperation = null;
+
+    // Function to create inline find and replace container
+    function createFindReplaceContainer() {
+        const container = document.createElement('div');
+        container.id = 'genius-find-replace-container';
+        container.style.cssText = `
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            font-size: 0.875rem;
+        `;
+
+        // Combined find/replace input container
+        const inputContainer = document.createElement('div');
+        Object.assign(inputContainer.style, BUTTON_STYLES.container, {
+            flexShrink: '1',
+            minWidth: '180px'
+        });
+
+        // Find input
+        const findInput = document.createElement('input');
+        findInput.type = 'text';
+        findInput.id = 'genius-find-input';
+        findInput.placeholder = 'Find';
+        findInput.style.cssText = `
+            padding: 0.375rem 0.5rem;
+            border: none;
+            font-size: 0.875rem;
+            flex: 1;
+            min-width: 60px;
+            max-width: 120px;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            outline: none;
+        `;
+
+        // Divider
+        const divider = document.createElement('div');
+        divider.style.cssText = `
+            width: 1px;
+            background-color: #ccc;
+            height: 100%;
+        `;
+
+        // Replace input
+        const replaceInput = document.createElement('input');
+        replaceInput.type = 'text';
+        replaceInput.id = 'genius-replace-input';
+        replaceInput.placeholder = 'Replace';
+        replaceInput.style.cssText = `
+            padding: 0.375rem 0.5rem;
+            border: none;
+            font-size: 0.875rem;
+            flex: 1;
+            min-width: 60px;
+            max-width: 120px;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            outline: none;
+        `;
+
+        // Divider 2 (before check button)
+        const divider2 = document.createElement('div');
+        divider2.style.cssText = `
+            width: 1px;
+            background-color: #ccc;
+            height: 100%;
+        `;
+
+        // Check/Execute button
+        const executeButton = document.createElement('button');
+        executeButton.innerHTML = '✓';
+        executeButton.type = 'button';
+        executeButton.title = 'Replace all occurrences';
+        Object.assign(executeButton.style, BUTTON_STYLES.innerButton);
+
+        executeButton.addEventListener('mouseenter', function() {
+            executeButton.style.backgroundColor = '#f5f5f5';
+        });
+
+        executeButton.addEventListener('mouseleave', function() {
+            executeButton.style.backgroundColor = 'transparent';
+        });
+
+        executeButton.addEventListener('click', function() {
+            performReplace();
+        });
+
+        inputContainer.appendChild(findInput);
+        inputContainer.appendChild(divider);
+        inputContainer.appendChild(replaceInput);
+        inputContainer.appendChild(divider2);
+        inputContainer.appendChild(executeButton);
+
+        // Combined undo/case sensitive button container
+        const buttonContainer = document.createElement('div');
+        Object.assign(buttonContainer.style, BUTTON_STYLES.container, {
+            flexShrink: '0',
+            minWidth: '56px'
+        });
+
+        // Undo button (left side)
+        const undoButton = document.createElement('button');
+        undoButton.innerHTML = '↺';
+        undoButton.type = 'button';
+        undoButton.id = 'genius-undo-replace-button';
+        undoButton.title = 'Undo last replace operation';
+        undoButton.disabled = true;
+        Object.assign(undoButton.style, BUTTON_STYLES.innerButton, {
+            color: '#999',
+            cursor: 'not-allowed',
+            opacity: '0.6'
+        });
+
+        // Button divider
+        const buttonDivider = document.createElement('div');
+        buttonDivider.style.cssText = `
+            width: 1px;
+            background-color: #ccc;
+            height: 100%;
+        `;
+
+        // Case sensitive button (right side)
+        const caseSensitiveButton = document.createElement('button');
+        caseSensitiveButton.innerHTML = 'Aa';
+        caseSensitiveButton.type = 'button';
+        caseSensitiveButton.id = 'genius-case-sensitive';
+        caseSensitiveButton.title = 'Toggle case sensitive search';
+        Object.assign(caseSensitiveButton.style, BUTTON_STYLES.innerButton, {
+            fontSize: '0.75rem'
+        });
+
+        let caseSensitive = false;
+        caseSensitiveButton.addEventListener('click', function() {
+            caseSensitive = !caseSensitive;
+            if (caseSensitive) {
+                caseSensitiveButton.style.backgroundColor = '#000';
+                caseSensitiveButton.style.color = '#fff';
+                caseSensitiveButton.style.borderRadius = '0.25rem 0 0 0.25rem'; // Only round left side
+                caseSensitiveButton.style.height = '32px'; // Fill full container height
+                caseSensitiveButton.style.padding = '0 0.5rem'; // Remove top/bottom padding
+            } else {
+                caseSensitiveButton.style.backgroundColor = 'transparent';
+                caseSensitiveButton.style.color = '#666';
+                caseSensitiveButton.style.borderRadius = '0';
+                caseSensitiveButton.style.height = '28px'; // Reset to original height
+                caseSensitiveButton.style.padding = '0.375rem 0.5rem'; // Reset to original padding
+            }
+        });
+
+        undoButton.addEventListener('click', function() {
+            if (!undoButton.disabled) {
+                undoFindReplace();
+            }
+        });
+
+        buttonContainer.appendChild(caseSensitiveButton);
+        buttonContainer.appendChild(buttonDivider);
+        buttonContainer.appendChild(undoButton);
+
+        container.appendChild(inputContainer);
+        container.appendChild(buttonContainer);
+
+        // Auto-replace functionality when typing
+        function performReplace() {
+            const findText = findInput.value.trim();
+            const replaceText = replaceInput.value;
+            
+            if (findText) {
+                performFindReplaceAll(findText, replaceText, caseSensitive);
+            }
+        }
+
+        // Handle Enter key in inputs to trigger replace
+        [findInput, replaceInput].forEach(input => {
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    performReplace();
+                }
+            });
+        });
+
+        return container;
+    }
+
+    // Function to perform find and replace all
+    function performFindReplaceAll(findText, replaceText, caseSensitive = false) {
+        // Find the active text editor
+        const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
+                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+                          document.querySelector('textarea') ||
+                          document.querySelector('[contenteditable="true"]');
+
+        if (!textEditor) {
+            alert('No text editor found');
+            return;
+        }
+
+        let originalContent;
+        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            originalContent = textEditor.value;
+        } else if (textEditor.isContentEditable) {
+            originalContent = textEditor.innerText || textEditor.textContent;
+        }
+
+        if (!originalContent) {
+            alert('No content to search');
+            return;
+        }
+
+        // Perform the replacement
+        let newContent;
+        let replacementCount = 0;
+        
+        if (caseSensitive) {
+            // Case sensitive replacement
+            const regex = new RegExp(escapeRegex(findText), 'g');
+            newContent = originalContent.replace(regex, (match) => {
+                replacementCount++;
+                return replaceText;
+            });
+        } else {
+            // Case insensitive replacement
+            const regex = new RegExp(escapeRegex(findText), 'gi');
+            newContent = originalContent.replace(regex, (match) => {
+                replacementCount++;
+                return replaceText;
+            });
+        }
+
+        if (replacementCount === 0) {
+            alert(`No occurrences of "${findText}" found`);
+            return;
+        }
+
+        // Store the operation for undo
+        lastFindReplaceOperation = {
+            originalContent: originalContent,
+            findText: findText,
+            replaceText: replaceText,
+            caseSensitive: caseSensitive,
+            replacementCount: replacementCount,
+            editor: textEditor
+        };
+
+        // Apply the changes
+        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            textEditor.value = newContent;
+        } else if (textEditor.isContentEditable) {
+            textEditor.innerText = newContent;
+        }
+
+        // Trigger input event to notify any listeners
+        const inputEvent = new Event('input', { bubbles: true });
+        textEditor.dispatchEvent(inputEvent);
+
+        // Enable undo button
+        const undoButton = document.getElementById('genius-undo-replace-button');
+        if (undoButton) {
+            undoButton.disabled = false;
+            undoButton.style.color = '#666';
+            undoButton.style.cursor = 'pointer';
+            undoButton.style.opacity = '1';
+            undoButton.style.backgroundColor = 'transparent';
+            undoButton.style.borderColor = '#666';
+            
+            undoButton.addEventListener('mouseenter', function() {
+                if (!undoButton.disabled) {
+                    undoButton.style.backgroundColor = '#f5f5f5';
+                    undoButton.style.borderColor = '#999';
+                }
+            });
+
+            undoButton.addEventListener('mouseleave', function() {
+                if (!undoButton.disabled) {
+                    undoButton.style.backgroundColor = 'transparent';
+                    undoButton.style.borderColor = '#666';
+                }
+            });
+        }
+
+        alert(`Replaced ${replacementCount} occurrence${replacementCount === 1 ? '' : 's'} of "${findText}" with "${replaceText}"`);
+    }
+
+    // Function to undo the last find and replace operation
+    function undoFindReplace() {
+        if (!lastFindReplaceOperation) {
+            alert('No find and replace operation to undo');
+            return;
+        }
+
+        const { originalContent, editor, findText, replaceText, replacementCount } = lastFindReplaceOperation;
+
+        // Restore original content
+        if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+            editor.value = originalContent;
+        } else if (editor.isContentEditable) {
+            editor.innerText = originalContent;
+        }
+
+        // Trigger input event to notify any listeners
+        const inputEvent = new Event('input', { bubbles: true });
+        editor.dispatchEvent(inputEvent);
+
+        // Disable undo button
+        const undoButton = document.getElementById('genius-undo-replace-button');
+        if (undoButton) {
+            undoButton.disabled = true;
+            undoButton.style.color = '#999';
+            undoButton.style.cursor = 'not-allowed';
+            undoButton.style.opacity = '0.6';
+            undoButton.style.backgroundColor = 'transparent';
+            undoButton.style.borderColor = '#ccc';
+        }
+
+        // Clear the last operation
+        lastFindReplaceOperation = null;
+
+        alert(`Undid replacement of ${replacementCount} occurrence${replacementCount === 1 ? '' : 's'} of "${findText}" with "${replaceText}"`);
+    }
+
+    // Helper function to escape regex special characters
+    function escapeRegex(string) {
+        return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     // Function to create the combined auto fix + settings button
@@ -3463,19 +4814,35 @@
                                  document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
                                  document.querySelector('.ihioQH');
 
+        // Look for the find/replace container first
+        const findReplaceContainer = document.getElementById('genius-find-replace-container');
+        
+        // Fallback to format explainer if find/replace container not found
         const formatExplainer = controlsContainer && (controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
                                    controlsContainer.querySelector('[class*="Explainer"]') ||
                                    controlsContainer.querySelector('*:last-child'));
 
         const updatePosition = () => {
-            if (controlsContainer && formatExplainer) {
+            // First try to position below find/replace container
+            if (findReplaceContainer) {
+                const findReplaceRect = findReplaceContainer.getBoundingClientRect();
+                const controlsRect = controlsContainer ? controlsContainer.getBoundingClientRect() : findReplaceRect;
+                popup.style.position = 'fixed';
+                popup.style.left = controlsRect.left + 'px';
+                popup.style.top = (findReplaceRect.bottom + 10) + 'px';
+                popup.style.maxWidth = (controlsRect.width - 20) + 'px';
+            }
+            // Fallback to original behavior
+            else if (controlsContainer && formatExplainer) {
                 const explainerRect = formatExplainer.getBoundingClientRect();
                 const containerRect = controlsContainer.getBoundingClientRect();
                 popup.style.position = 'fixed';
                 popup.style.left = containerRect.left + 'px';
                 popup.style.top = (explainerRect.bottom + 10) + 'px';
                 popup.style.maxWidth = (containerRect.width - 20) + 'px';
-            } else {
+            } 
+            // Final fallback
+            else {
                 popup.style.position = 'fixed';
                 popup.style.left = '20px';
                 popup.style.top = (window.innerHeight - 200) + 'px';
@@ -3567,7 +4934,10 @@
         fixedText = fixedText.replace(/\btheyd\b/gi, "they'd");
         
         // "We" contractions (with some context awareness)
-        fixedText = fixedText.replace(/\bwere\b(?=\s+(?:going|gonna|not|all|here|there|together|done|made))/gi, "we're");
+        // Exclude "were here yesterday" type patterns where "here" is followed by time words
+        fixedText = fixedText.replace(/\bwere\b(?=\s+(?:going|gonna|not|all|together|done|made))/gi, "we're");
+        // Handle "were here/there" more carefully - only if it's clearly present tense context
+        fixedText = fixedText.replace(/\bwere\b(?=\s+(?:here|there)(?:\s+(?:now|today|earlier|before|waiting|standing|sitting|looking|watching|talking|going|coming|ready|about|just)|\s*[,.]|\s*$))/gi, "we're");
         fixedText = fixedText.replace(/\bwell\b(?=\s+(?:see|be|go|have|get|do|make|take|come|find))/gi, "we'll");
         fixedText = fixedText.replace(/\bweve\b/gi, "we've");
         fixedText = fixedText.replace(/\bwed\b/gi, "we'd");
@@ -3782,10 +5152,10 @@
         
         // 'cuz (because) - be careful not to change when it means "cousin"
         // Avoid matching when preceded by possessive pronouns (my cuz, our cuz, etc.)
-        // Handle both 'cuz and cuz, don't duplicate apostrophes
-        fixedText = fixedText.replace(/(?<!(?:my|our|your|his|her|their|the)\s+)(?<!')('?)cuz\b/gi, function(match, existingApostrophe) {
-            // If there's already an apostrophe, don't add another one
-            const apostrophe = existingApostrophe ? '' : "'";
+        // Handle both 'cuz and cuz, don't duplicate apostrophes, and DON'T match 'cause
+        fixedText = fixedText.replace(/(?<!(?:my|our|your|his|her|their|the)\s+)(?<![''\u2018\u2019])('?)cuz\b(?!se\b)/gi, function(match, existingApostrophe) {
+            // If there's already an apostrophe, keep it; otherwise add one
+            const apostrophe = existingApostrophe ? existingApostrophe : "'";
             
             if (match === "'CUZ" || match === "CUZ") return apostrophe + "cause";
             if (match === "'Cuz" || match === "Cuz") return apostrophe + "cause";
@@ -3970,6 +5340,75 @@
             fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, '$1—');
         }
 
+        // Fix stutter emdashes (e.g., "Ja— ja— ja— ja— ja— jacked" → "Ja-ja-ja-ja-ja-jacked")
+        if (autoFixSettings.stutterEmDash) {
+            console.log('Fixing stutter emdashes...');
+            
+            // Look for patterns where the same word or word fragment is repeated with emdashes
+            // Pattern: word— word— ... (final word that starts with same letters)
+            // We'll use a more straightforward approach with a function to analyze each potential match
+            
+            // First, find all sequences that might be stutter patterns
+            // Look for: word— followed by potential repetitions
+            fixedText = fixedText.replace(/\b([a-zA-Z]+)—\s*([a-zA-Z]+)(?:—\s*[a-zA-Z]+)*\b/gi, function(match) {
+                console.log('Analyzing potential stutter pattern:', match);
+                
+                // Split by emdash and clean up whitespace
+                const parts = match.split(/—\s*/).map(part => part.trim()).filter(part => part.length > 0);
+                
+                if (parts.length < 2) {
+                    // Need at least 2 parts for a stutter (base— final)
+                    return match;
+                }
+                
+                const baseWord = parts[0].toLowerCase();
+                let isStutterPattern = true;
+                
+                // Check if this is a valid stutter pattern
+                if (parts.length === 2) {
+                    // For 2-part patterns like "I— I" or "Y— you", second part should start with the base word
+                    const secondPart = parts[1].toLowerCase();
+                    if (!secondPart.startsWith(baseWord)) {
+                        isStutterPattern = false;
+                    }
+                } else {
+                    // For 3+ part patterns, check middle parts and final part
+                    for (let i = 1; i < parts.length - 1; i++) {
+                        // Middle parts should be exactly the same as base word
+                        if (parts[i].toLowerCase() !== baseWord) {
+                            isStutterPattern = false;
+                            break;
+                        }
+                    }
+                    
+                    // Final part should start with the base word or be a completion of it
+                    const finalPart = parts[parts.length - 1].toLowerCase();
+                    if (!finalPart.startsWith(baseWord)) {
+                        isStutterPattern = false;
+                    }
+                }
+                
+                // Additional check: make sure there are no spaces in the original pattern
+                // (this should be one connected word-like structure)
+                if (match.includes(' ') && match.split(' ').length > parts.length) {
+                    // If there are more spaces than expected from the emdash splits,
+                    // this might be separate words, not a stutter
+                    isStutterPattern = false;
+                }
+                
+                if (isStutterPattern) {
+                    console.log('Confirmed stutter pattern, converting:', match);
+                    // Convert emdashes to regular dashes and remove extra spaces
+                    let converted = parts.join('-');
+                    console.log('Converted to:', converted);
+                    return converted;
+                } else {
+                    console.log('Not a stutter pattern, keeping original:', match);
+                    return match;
+                }
+            });
+        }
+
         // Capitalize first letter inside parentheses
         if (autoFixSettings.capitalizeParentheses) {
             console.log('Capitalizing first letter in parentheses...');
@@ -3991,38 +5430,156 @@
 
 
         // Apply custom regex rules BEFORE number conversion
-        if (autoFixSettings.customRegex && autoFixSettings.customRegexRules) {
+        if (autoFixSettings.customRegex) {
             console.log('Applying custom regex rules...');
-            autoFixSettings.customRegexRules.forEach((rule, index) => {
-                if (rule.enabled !== false) {
-                    try {
-                        const regex = new RegExp(rule.find, rule.flags || 'gi');
-                        const beforeLength = fixedText.length;
-                        
-                        // Handle both string and function replacements
-                        if (typeof rule.replace === 'function') {
-                            fixedText = fixedText.replace(regex, rule.replace);
-                        } else {
-                            // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
-                            let jsReplacement = rule.replace;
-                            if (typeof jsReplacement === 'string') {
-                                // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
-                                // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
-                                jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+            
+            // Process rules from groups
+            if (autoFixSettings.ruleGroups) {
+                autoFixSettings.ruleGroups.forEach((group, groupIndex) => {
+                    group.rules.forEach((rule, ruleIndex) => {
+                        if (rule.enabled !== false) {
+                            try {
+                                let processedFind = rule.find;
+                                let processedFlags = rule.flags || 'gi';
+                                
+                                // Enhanced boundary processing
+                                if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                                    // Remove 'e' from flags as it's not a standard regex flag
+                                    processedFlags = processedFlags.replace(/e/g, '');
+                                    
+                                    // Convert simple word boundary patterns to enhanced boundaries
+                                    // Replace \b with enhanced boundary pattern
+                                    if (processedFind.includes('\\b')) {
+                                        // Enhanced boundary characters include: start/end of string, whitespace, brackets, parentheses, common punctuation, em dashes
+                                        const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                                        const startBoundary = `(?<=^|${boundaryChars})`;
+                                        const endBoundary = `(?=${boundaryChars}|$)`;
+                                        
+                                        // Replace word boundaries with enhanced boundaries
+                                        // Handle starting \b
+                                        processedFind = processedFind.replace(/^\\b/, startBoundary);
+                                        // Handle ending \b
+                                        processedFind = processedFind.replace(/\\b$/, endBoundary);
+                                        // Handle \b in the middle (both sides) - use lookbehind and lookahead
+                                        processedFind = processedFind.replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+                                        
+                                        console.log(`Enhanced boundary applied to rule "${rule.description}" from group "${group.title}":`, rule.find, '->', processedFind);
+                                    }
+                                    // Also handle rules without \b but with enhancedBoundary flag - wrap the entire pattern
+                                    else {
+                                        const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                                        const startBoundary = `(?<=^|${boundaryChars})`;
+                                        const endBoundary = `(?=${boundaryChars}|$)`;
+                                        
+                                        // Wrap the pattern with enhanced boundaries, using lookbehind/lookahead
+                                        processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                                        
+                                        console.log(`Enhanced boundary applied to rule "${rule.description}" from group "${group.title}":`, rule.find, '->', processedFind);
+                                    }
+                                }
+                                
+                                const regex = new RegExp(processedFind, processedFlags);
+                                const beforeLength = fixedText.length;
+                                
+                                // Handle both string and function replacements
+                                if (typeof rule.replace === 'function') {
+                                    fixedText = fixedText.replace(regex, rule.replace);
+                                } else {
+                                    // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
+                                    let jsReplacement = rule.replace;
+                                    if (typeof jsReplacement === 'string') {
+                                        // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
+                                        // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
+                                        jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                                    }
+                                    
+                                    fixedText = fixedText.replace(regex, jsReplacement);
+                                }
+                                
+                                const afterLength = fixedText.length;
+                                if (beforeLength !== afterLength) {
+                                    console.log(`Custom rule "${rule.description}" from group "${group.title}" applied changes`);
+                                }
+                            } catch (e) {
+                                console.log(`Custom regex rule "${rule.description}" from group "${group.title}" failed:`, e.message);
+                            }
+                        }
+                    });
+                });
+            }
+            
+            // Process ungrouped rules
+            if (autoFixSettings.ungroupedRules) {
+                autoFixSettings.ungroupedRules.forEach((rule, index) => {
+                    if (rule.enabled !== false) {
+                        try {
+                            let processedFind = rule.find;
+                            let processedFlags = rule.flags || 'gi';
+                            
+                            // Enhanced boundary processing
+                            if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                                // Remove 'e' from flags as it's not a standard regex flag
+                                processedFlags = processedFlags.replace(/e/g, '');
+                                
+                                // Convert simple word boundary patterns to enhanced boundaries
+                                // Replace \b with enhanced boundary pattern
+                                if (processedFind.includes('\\b')) {
+                                    // Enhanced boundary characters include: start/end of string, whitespace, brackets, parentheses, common punctuation, em dashes
+                                    const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                                    const startBoundary = `(?<=^|${boundaryChars})`;
+                                    const endBoundary = `(?=${boundaryChars}|$)`;
+                                    
+                                    // Replace word boundaries with enhanced boundaries
+                                    // Handle starting \b
+                                    processedFind = processedFind.replace(/^\\b/, startBoundary);
+                                    // Handle ending \b
+                                    processedFind = processedFind.replace(/\\b$/, endBoundary);
+                                    // Handle \b in the middle (both sides) - use lookbehind and lookahead
+                                    processedFind = processedFind.replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+                                    
+                                    console.log(`Enhanced boundary applied to ungrouped rule "${rule.description}":`, rule.find, '->', processedFind);
+                                }
+                                // Also handle rules without \b but with enhancedBoundary flag - wrap the entire pattern
+                                else {
+                                    const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                                    const startBoundary = `(?<=^|${boundaryChars})`;
+                                    const endBoundary = `(?=${boundaryChars}|$)`;
+                                    
+                                    // Wrap the pattern with enhanced boundaries, using lookbehind/lookahead
+                                    processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                                    
+                                    console.log(`Enhanced boundary applied to ungrouped rule "${rule.description}":`, rule.find, '->', processedFind);
+                                }
                             }
                             
-                            fixedText = fixedText.replace(regex, jsReplacement);
+                            const regex = new RegExp(processedFind, processedFlags);
+                            const beforeLength = fixedText.length;
+                            
+                            // Handle both string and function replacements
+                            if (typeof rule.replace === 'function') {
+                                fixedText = fixedText.replace(regex, rule.replace);
+                            } else {
+                                // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
+                                let jsReplacement = rule.replace;
+                                if (typeof jsReplacement === 'string') {
+                                    // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
+                                    // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
+                                    jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                                }
+                                
+                                fixedText = fixedText.replace(regex, jsReplacement);
+                            }
+                            
+                            const afterLength = fixedText.length;
+                            if (beforeLength !== afterLength) {
+                                console.log(`Ungrouped custom rule "${rule.description}" applied changes`);
+                            }
+                        } catch (e) {
+                            console.log(`Ungrouped custom regex rule "${rule.description}" failed:`, e.message);
                         }
-                        
-                        const afterLength = fixedText.length;
-                        if (beforeLength !== afterLength) {
-                            console.log(`Custom rule "${rule.description}" applied changes`);
-                        }
-                    } catch (e) {
-                        console.log(`Custom regex rule "${rule.description}" failed:`, e.message);
                     }
-                }
-            });
+                });
+            }
         }
 
         // Convert numbers to text based on setting
@@ -4456,6 +6013,102 @@
         currentSelection = null;
     }
 
+    // Function to handle auto em dash conversion
+    function handleAutoEmDashConversion(e) {
+        const target = e.target;
+        
+        // Only work on lyrics editor elements
+        const isLyricsEditor = target && target.closest && target.matches &&
+                              target.closest('[class*="LyricsEdit"]') && 
+                              (target.matches('textarea') || target.isContentEditable);
+        
+        if (!isLyricsEditor) {
+            return;
+        }
+
+        let currentContent;
+        let cursorPosition;
+        
+        // Get content and cursor position
+        if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
+            currentContent = target.value;
+            cursorPosition = target.selectionStart;
+        } else if (target.isContentEditable) {
+            currentContent = target.innerText || target.textContent;
+            // For contenteditable, we'll handle cursor position differently
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                cursorPosition = range.startOffset;
+            }
+        } else {
+            return;
+        }
+
+        // Check for -- or --- patterns and replace with em dash based on setting
+        let newContent = currentContent;
+        let replacementMade = false;
+        let cursorAdjustment = 0;
+
+        // Get the em dash mode setting (default to '3' if not set)
+        const emDashMode = autoFixSettings.emDashMode || '3';
+
+        if (emDashMode === '3') {
+            // Replace --- (three dashes)
+            if (newContent.includes('---')) {
+                const beforeReplace = newContent.substring(0, cursorPosition);
+                
+                // Count replacements before cursor to adjust cursor position
+                const beforeMatches = (beforeReplace.match(/---/g) || []).length;
+                
+                newContent = newContent.replace(/---/g, '—');
+                replacementMade = true;
+                // Each --- becomes — (3 chars become 1, so -2 adjustment per replacement)
+                cursorAdjustment = -(beforeMatches * 2);
+            }
+        } else if (emDashMode === '2') {
+            // Replace -- (two dashes) but avoid replacing if it's part of a longer sequence
+            if (newContent.includes('--')) {
+                const beforeReplace = newContent.substring(0, cursorPosition);
+                
+                // Count -- that are not part of --- (we need to be careful here)
+                // Replace -- with — but avoid replacing if it's part of a longer sequence
+                const beforeMatches = (beforeReplace.match(/(?<!-)--(?!-)/g) || []).length;
+                
+                newContent = newContent.replace(/(?<!-)--(?!-)/g, '—');
+                if (beforeMatches > 0) {
+                    replacementMade = true;
+                    // Each -- becomes — (2 chars become 1, so -1 adjustment per replacement)
+                    cursorAdjustment = -(beforeMatches * 1);
+                }
+            }
+        }
+
+        // Apply changes if replacements were made
+        if (replacementMade) {
+            if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
+                target.value = newContent;
+                // Restore cursor position
+                const newCursorPosition = Math.max(0, cursorPosition + cursorAdjustment);
+                target.setSelectionRange(newCursorPosition, newCursorPosition);
+            } else if (target.isContentEditable) {
+                target.innerText = newContent;
+                // For contenteditable, restoring cursor position is more complex
+                // We'll just place it at the end for simplicity
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+            
+            // Trigger input event to notify any listeners
+            const inputEvent = new Event('input', { bubbles: true });
+            target.dispatchEvent(inputEvent);
+        }
+    }
+
     // Function to handle text selection
     function handleTextSelection() {
         console.log('Text selection event triggered');
@@ -4601,6 +6254,7 @@
         const existingToggleButton = document.getElementById('genius-emdash-toggle');
         const existingAutoFixButton = document.getElementById('genius-autofix-button');
         const existingZwsButton = document.getElementById('genius-zws-button');
+        const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
         if (existingToggleButton) {
             existingToggleButton.remove();
             console.log('Removed existing em dash button');
@@ -4613,6 +6267,10 @@
             existingZwsButton.remove();
             console.log('Removed existing zero-width space button');
         }
+        if (existingFindReplaceContainer) {
+            existingFindReplaceContainer.remove();
+            console.log('Removed existing find replace container');
+        }
 
         // Look for the lyrics editor controls container (try multiple approaches)
         const controlsContainer = document.querySelector('.LyricsEdit-desktop__Controls-sc-6d8e67d6-3') ||
@@ -4624,18 +6282,31 @@
         if (controlsContainer) {
             console.log('Found controls container:', controlsContainer);
             
+            // Expand the controls container to use available space better
+            controlsContainer.style.maxWidth = 'none';
+            controlsContainer.style.width = '130%';
+            if (controlsContainer.style.flexBasis) {
+                controlsContainer.style.flexBasis = 'auto';
+            }
+            
             // Create all buttons
             toggleButton = createToggleButton();
             autoFixButton = createAutoFixButton();
             const zwsButton = createZeroWidthSpaceButton();
+            const findReplaceContainer = createFindReplaceContainer();
             
             // Create containers using utility
             const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
             mainButtonContainer.appendChild(toggleButton);
             mainButtonContainer.appendChild(autoFixButton);
             
-            const zwsButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
-            zwsButtonContainer.appendChild(zwsButton);
+            const smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', { 
+                marginBottom: '0.5rem',
+                flexWrap: 'wrap',
+                minWidth: '0'
+            });
+            smallButtonsContainer.appendChild(zwsButton);
+            smallButtonsContainer.appendChild(findReplaceContainer);
             
             // Look for the "How to Format Lyrics" section to insert before it
             const formatExplainer = controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
@@ -4645,12 +6316,12 @@
             if (formatExplainer && formatExplainer.textContent && formatExplainer.textContent.includes('Format')) {
                 // Insert before the explainer (above "How to Format Lyrics:")
                 controlsContainer.insertBefore(mainButtonContainer, formatExplainer);
-                controlsContainer.insertBefore(zwsButtonContainer, formatExplainer);
+                controlsContainer.insertBefore(smallButtonsContainer, formatExplainer);
                 console.log('Inserted buttons before format explainer');
             } else {
                 // Fallback: append to the container
                 controlsContainer.appendChild(mainButtonContainer);
-                controlsContainer.appendChild(zwsButtonContainer);
+                controlsContainer.appendChild(smallButtonsContainer);
                 console.log('Appended buttons to controls container');
             }
             
@@ -4663,7 +6334,7 @@
         return false;
     }
 
-    // Function to remove the "How to Format Lyrics" div
+    // Function to remove the "How to Format Lyrics" div and LyricsEditExplainer divs
     function removeFormatExplainerDiv() {
         // Look for the div containing "How to Format Lyrics" text
         const explainerDivs = document.querySelectorAll('div');
@@ -4676,6 +6347,13 @@
                     div.remove();
                 }
             }
+        });
+        
+        // Also remove LyricsEditExplainer divs (with dynamic class names)
+        const lyricsExplainerDivs = document.querySelectorAll('div[class*="LyricsEditExplainer"]');
+        lyricsExplainerDivs.forEach(div => {
+            console.log('Removing LyricsEditExplainer div:', div.className);
+            div.remove();
         });
     }
 
@@ -4713,6 +6391,9 @@
             // Add a small delay to allow selection to stabilize
             setTimeout(handleTextSelection, 10);
         });
+
+        // Add auto em dash conversion listener
+        document.addEventListener('input', handleAutoEmDashConversion);
 
 
 
@@ -4861,34 +6542,48 @@
                 console.log('Fallback container found:', targetContainer);
                 
                 if (targetContainer) {
+                    // Expand the container to use available space better
+                    targetContainer.style.maxWidth = 'none';
+                    targetContainer.style.width = '130%';
+                    if (targetContainer.style.flexBasis) {
+                        targetContainer.style.flexBasis = 'auto';
+                    }
                     // Remove any existing buttons
                     const existingToggle = document.getElementById('genius-emdash-toggle');
                     const existingAutoFix = document.getElementById('genius-autofix-button');
                     const existingZws = document.getElementById('genius-zws-button');
+                    const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
                     if (existingToggle) existingToggle.remove();
                     if (existingAutoFix) existingAutoFix.remove();
                     if (existingZws) existingZws.remove();
+                    if (existingFindReplaceContainer) existingFindReplaceContainer.remove();
                     
                     // Create all buttons
                     toggleButton = createToggleButton();
                     autoFixButton = createAutoFixButton();
                     const zwsButton = createZeroWidthSpaceButton();
+                    const findReplaceContainer = createFindReplaceContainer();
                     
                     // Create containers using utility
                     const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
                     mainButtonContainer.appendChild(toggleButton);
                     mainButtonContainer.appendChild(autoFixButton);
                     
-                    const zwsButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
-                    zwsButtonContainer.appendChild(zwsButton);
+                    const smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', { 
+                        marginBottom: '0.5rem',
+                        flexWrap: 'wrap',
+                        minWidth: '0'
+                    });
+                    smallButtonsContainer.appendChild(zwsButton);
+                    smallButtonsContainer.appendChild(findReplaceContainer);
                     
                     // Try to insert at the top of the container
                     if (targetContainer.firstChild) {
                         targetContainer.insertBefore(mainButtonContainer, targetContainer.firstChild);
-                        targetContainer.insertBefore(zwsButtonContainer, targetContainer.firstChild.nextSibling);
+                        targetContainer.insertBefore(smallButtonsContainer, targetContainer.firstChild.nextSibling);
                     } else {
                         targetContainer.appendChild(mainButtonContainer);
-                        targetContainer.appendChild(zwsButtonContainer);
+                        targetContainer.appendChild(smallButtonsContainer);
                     }
                     
                     updateButtonState();
