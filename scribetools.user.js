@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -46,6 +46,8 @@
         customRegexRules: [], // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
         emDashEnabled: false, // Save em dash toggle state
         emDashMode: '3', // Options: '2' for --, '3' for --- (default is 3)
+        dashType: 'em', // Options: 'em' for em dash (—), 'en' for en dash (–), 'off' for disabled
+        dashTrigger: '3', // Options: 'off' for disabled, '2' for --, '3' for --- (moved from emDashMode for dash button settings)
         // New rule groups structure
         ruleGroups: [], // Array of {id: string, title: string, description: string, author: string, version: string, rules: array}
         ungroupedRules: [] // Rules not assigned to any group
@@ -277,6 +279,40 @@
                 });
             });
         },
+
+        // Reusable button styling with predefined color schemes
+        styleButtonWithHover(button, colorScheme = 'primary') {
+            const schemes = {
+                primary: {
+                    base: { backgroundColor: '#007bff', color: 'white', borderColor: '#007bff' },
+                    hover: { backgroundColor: '#0056b3', borderColor: '#004085' }
+                },
+                success: {
+                    base: { backgroundColor: '#28a745', color: 'white', borderColor: '#28a745' },
+                    hover: { backgroundColor: '#218838', borderColor: '#1e7e34' }
+                },
+                info: {
+                    base: { backgroundColor: '#17a2b8', color: 'white', borderColor: '#17a2b8' },
+                    hover: { backgroundColor: '#138496', borderColor: '#117a8b' }
+                },
+                danger: {
+                    base: { backgroundColor: '#dc3545', color: 'white', borderColor: '#dc3545' },
+                    hover: { backgroundColor: '#c82333', borderColor: '#bd2130' }
+                },
+                secondary: {
+                    base: { backgroundColor: '#6c757d', color: 'white', borderColor: '#6c757d' },
+                    hover: { backgroundColor: '#545b62', borderColor: '#4e555b' }
+                }
+            };
+
+            const scheme = schemes[colorScheme] || schemes.primary;
+            
+            // Apply base styles
+            Object.assign(button.style, scheme.base);
+            
+            // Add hover effect
+            this.addHoverEffect(button, scheme.hover, scheme.base);
+        },
         
         // Create form field
         createFormField(label, type, value = '', isMonospace = false) {
@@ -349,6 +385,9 @@
                 styles: { fontSize: '10px', padding: '2px 6px', height: 'auto' }
             });
             
+            // Apply consistent red styling to match delete group button
+            this.styleButtonWithHover(deleteBtn, 'danger');
+            
             header.appendChild(enabledCheckbox);
             header.appendChild(description);
             header.appendChild(deleteBtn);
@@ -387,17 +426,30 @@
         }
     };
 
-    // Function to create the toggle button
+    // Function to create the combined dash toggle + settings button
     function createToggleButton() {
         const button = document.createElement('button');
-        button.innerHTML = '—';
-        button.title = 'Toggle Em Dash Auto-Replace (Currently: OFF)';
+        
+        // Get current dash type for display
+        const dashType = autoFixSettings.dashType || 'em';
+        const dashChar = dashType === 'em' ? '—' : dashType === 'en' ? '–' : '—';
+        
+        button.innerHTML = `
+            <span class="dash-text" style="margin-right: 0.5rem;">${dashChar}</span>
+            <span class="settings-icon" style="opacity: 0.7; transition: opacity 0.2s;">
+                <svg class="svg-icon" style="width: 1em; height: 1em;vertical-align: middle;fill: currentColor;overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M512 661.994667q61.994667 0 106.005333-44.010667t44.010667-106.005333-44.010667-106.005333-106.005333-44.010667-106.005333 44.010667-44.010667 106.005333 44.010667 106.005333 106.005333 44.010667zM829.994667 554.005333l90.005333 69.994667q13.994667 10.005333 4.010667 28.010667l-85.994667 148.010667q-8 13.994667-26.005333 8l-106.005333-42.005333q-42.005333 29.994667-72 42.005333l-16 112q-4.010667 18.005333-20.010667 18.005333l-172.010667 0q-16 0-20.010667-18.005333l-16-112q-37.994667-16-72-42.005333l-106.005333 42.005333q-18.005333 5.994667-26.005333-8l-85.994667-148.010667q-10.005333-18.005333 4.010667-28.010667l90.005333-69.994667q-2.005333-13.994667-2.005333-42.005333t2.005333-42.005333l-90.005333-69.994667q-13.994667-10.005333-4.010667-28.010667l85.994667-148.010667q8-13.994667 26.005333-8l106.005333 42.005333q42.005333-29.994667 72-42.005333l16-112q4.010667-18.005333 20.010667-18.005333l172.010667 0q16 0 20.010667 18.005333l16 112q37.994667 16 72 42.005333l106.005333-42.005333q18.005333-5.994667 26.005333 8l85.994667 148.010667q10.005333 18.005333-4.010667 28.010667l-90.005333 69.994667q2.005333 13.994667 2.005333 42.005333t-2.005333 42.005333z" />
+                </svg>
+            </span>
+        `;
+        
+        button.title = 'Toggle Dash Auto-Replace. Click gear icon for settings.';
         button.id = 'genius-emdash-toggle';
         
         // Style to match Genius buttons
         button.className = 'Button__Container-sc-f0320e7a-0 ggiKTY LyricsEdit-desktop__Button-sc-6d8e67d6-4 hvIRPS';
         
-        // Additional custom styling to ensure it looks right and flows with the page
+        // Additional custom styling to match the autofix button
         button.style.cssText = `
             margin-bottom: 0.5rem;
             background-color: transparent;
@@ -411,29 +463,50 @@
             border-radius: 1.25rem;
             cursor: pointer;
             min-width: auto;
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             position: relative;
         `;
 
         // Add hover effects like Genius buttons
         button.addEventListener('mouseenter', function() {
-            // Hover turns black background with white text for both states
             button.style.backgroundColor = '#000';
             button.style.color = '#fff';
+            // Make settings icon more visible on hover
+            const settingsIcon = button.querySelector('.settings-icon');
+            if (settingsIcon) settingsIcon.style.opacity = '1';
         });
 
         button.addEventListener('mouseleave', function() {
             updateButtonState(); // Reset to proper state colors
+            // Reset settings icon opacity
+            const settingsIcon = button.querySelector('.settings-icon');
+            if (settingsIcon) settingsIcon.style.opacity = '0.7';
         });
 
-        // Toggle functionality
+        // Combined click functionality
         button.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            emDashEnabled = !emDashEnabled;
-            autoFixSettings.emDashEnabled = emDashEnabled; // Save to settings
-            saveSettings(); // Persist to localStorage
-            updateButtonState();
+            
+            // Get button bounds and click position
+            const buttonRect = button.getBoundingClientRect();
+            const clickX = e.clientX;
+            
+            // Create a generous buffer zone - if click is in the right 35% of button, treat as settings
+            const buttonWidth = buttonRect.width;
+            const settingsZoneStart = buttonRect.left + (buttonWidth * 0.5); // Right 50% of button
+            
+            // If click is in the settings zone (right 50%), open settings
+            if (clickX >= settingsZoneStart) {
+                toggleDashSettingsPopup();
+            } else {
+                // Otherwise, toggle dash functionality
+                emDashEnabled = !emDashEnabled;
+                autoFixSettings.emDashEnabled = emDashEnabled; // Save to settings
+                saveSettings(); // Persist to localStorage
+                updateButtonState();
+            }
         });
 
         return button;
@@ -470,6 +543,153 @@
         document.body.appendChild(popup);
 
         return { backdrop, popup };
+    }
+
+    // Function to create the dash settings popup
+    function createDashSettingsPopup() {
+        // Create backdrop using utility
+        const backdrop = UI.createBackdrop(() => {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+        backdrop.id = 'genius-dash-settings-backdrop';
+
+        // Create popup using utility
+        const popup = UI.createPopup();
+        popup.id = 'genius-dash-settings-popup';
+
+        // Create header using utility
+        const header = UI.createPopupHeader('Dash Settings', () => {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+
+        popup.appendChild(header);
+
+        // Create settings content
+        const content = createDashSettingsContent();
+        popup.appendChild(content);
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(popup);
+
+        return { backdrop, popup };
+    }
+
+    // Function to create dash settings content
+    function createDashSettingsContent() {
+        const content = document.createElement('div');
+
+        const settings = [
+            { 
+                key: 'dashType', 
+                label: 'Dash Type', 
+                type: 'dropdown',
+                options: [
+                    { value: 'en', label: 'En dash (–)' },
+                    { value: 'em', label: 'Em dash (—)' }
+                ]
+            },
+            { 
+                key: 'dashTrigger', 
+                label: 'Trigger Pattern', 
+                type: 'dropdown',
+                options: [
+                    { value: 'off', label: 'Off (disabled)' },
+                    { value: '2', label: 'Two dashes (--)' },
+                    { value: '3', label: 'Three dashes (---)' }
+                ]
+            }
+        ];
+
+        settings.forEach(setting => {
+            const container = document.createElement('div');
+            container.style.cssText = `
+                display: flex;
+                align-items: flex-start;
+                margin-bottom: 12px;
+                padding: 8px;
+                border-radius: 6px;
+                transition: background-color 0.2s ease;
+            `;
+
+            container.addEventListener('mouseenter', function() {
+                this.style.backgroundColor = '#f8f9fa';
+            });
+
+            container.addEventListener('mouseleave', function() {
+                this.style.backgroundColor = 'transparent';
+            });
+
+            // Create dropdown
+            const label = document.createElement('label');
+            label.textContent = setting.label;
+            label.style.cssText = `
+                font-size: 14px;
+                cursor: pointer;
+                color: #444;
+                line-height: 1.4;
+                flex: 1;
+                font-weight: 100;
+                font-family: 'Programme', Arial, sans-serif;
+            `;
+
+            const dropdown = document.createElement('select');
+            dropdown.id = `dash-setting-${setting.key}`;
+            dropdown.style.cssText = `
+                margin-left: 12px;
+                margin-top: 0px;
+                cursor: pointer;
+                padding: 1px 6px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background: #fff;
+                font-family: 'Programme', Arial, sans-serif;
+                font-size: 13px;
+                height: 18px;
+                vertical-align: middle;
+            `;
+
+            setting.options.forEach(option => {
+                const optionEl = document.createElement('option');
+                optionEl.value = option.value;
+                optionEl.textContent = option.label;
+                optionEl.selected = autoFixSettings[setting.key] === option.value;
+                dropdown.appendChild(optionEl);
+            });
+
+            dropdown.addEventListener('change', function() {
+                autoFixSettings[setting.key] = this.value;
+                saveSettings();
+                
+                // Update button display if dash type changed
+                if (setting.key === 'dashType') {
+                    updateButtonState();
+                }
+            });
+
+            container.appendChild(label);
+            container.appendChild(dropdown);
+            content.appendChild(container);
+        });
+
+        return content;
+    }
+
+    // Function to toggle dash settings popup
+    function toggleDashSettingsPopup() {
+        let popup = document.getElementById('genius-dash-settings-popup');
+        let backdrop = document.getElementById('genius-dash-settings-backdrop');
+        
+        if (!popup) {
+            const result = createDashSettingsPopup();
+            popup = result.popup;
+            backdrop = result.backdrop;
+        }
+        
+        const isVisible = popup.style.display !== 'none';
+        popup.style.display = isVisible ? 'none' : 'block';
+        backdrop.style.display = isVisible ? 'none' : 'flex';
     }
 
     // Function to create tabbed interface
@@ -587,17 +807,12 @@
             { key: 'apostrophes', label: 'Add missing apostrophes (gon\'→gon\', \'til, etc.)', type: 'checkbox' },
             { key: 'parenthesesFormatting', label: 'Fix parentheses formatting', type: 'checkbox' },
             { key: 'bracketHighlighting', label: 'Highlight mismatched brackets', type: 'checkbox' },
-            { key: 'emDashFixes', label: 'Convert word- to word—', type: 'checkbox' },
+            { key: 'emDashFixes', label: 'Convert word- to word— / word–', type: 'checkbox' },
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
             { key: 'multipleSpaces', label: 'Fix spacing (multiple spaces → single, remove trailing)', type: 'checkbox' },
             { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
             { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja-)', type: 'checkbox' },
-            { key: 'emDashMode', label: 'Multiple dashes → emdash (—)', type: 'dropdown',
-                options: [
-                    { value: '2', label: 'Two dashes (--)' },
-                    { value: '3', label: 'Three dashes (---)' }
-                ]
-              },
+
             { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown', 
               options: [
                   { value: 'off', label: 'Off' },
@@ -855,7 +1070,7 @@
             gap: 8px;
         `;
 
-                 const saveBtn = createSmallButton('Add Rule', () => {
+                         const saveBtn = createSmallButton('Add Rule', () => {
             const description = descriptionField.querySelector('input').value;
             const find = findField.querySelector('input').value;
             const replace = replaceField.querySelector('input').value;
@@ -897,16 +1112,15 @@
             enhancedBoundaryCheckbox.checked = false;
             form.style.display = 'none';
             
-                         // Reset button text - find the correct add rule button
+            // Reset button text - find the correct add rule button
             const addRuleButton = form.parentElement.querySelector('button');
             if (addRuleButton && addRuleButton.textContent === 'Cancel') {
                 addRuleButton.textContent = '+ Add Rule';
             }
         });
 
-        saveBtn.style.backgroundColor = '#007bff';
-        saveBtn.style.color = 'white';
-        saveBtn.style.borderColor = '#007bff';
+        // Apply consistent button styling with hover effect
+        UI.styleButtonWithHover(saveBtn, 'primary');
 
         buttonContainer.appendChild(saveBtn);
         form.appendChild(buttonContainer);
@@ -990,14 +1204,16 @@
             form.style.display = 'none';
         });
 
-        importBtn.style.backgroundColor = '#007bff';
-        importBtn.style.color = 'white';
-        importBtn.style.borderColor = '#007bff';
+        // Apply consistent button styling with hover effect
+        UI.styleButtonWithHover(importBtn, 'primary');
 
         const cancelBtn = createSmallButton('Cancel', () => {
             textArea.value = '';
             form.style.display = 'none';
         });
+
+        // Apply consistent button styling with hover effect
+        UI.styleButtonWithHover(cancelBtn, 'secondary');
 
         buttonContainer.appendChild(importBtn);
         buttonContainer.appendChild(cancelBtn);
@@ -1384,9 +1600,22 @@
             }
         );
 
-        // Add group indicator and move to ungrouped option
+        // Add group indicator and move/edit options
         const ruleActions = ruleElement.querySelector('div > div'); // Button container
         if (ruleActions) {
+            // Add edit button with proper hover effect
+            const editBtn = createSmallButton('Edit', () => {
+                showEditRulePopup(rule, groupIndex, ruleIndex, false, ruleElement);
+            });
+            editBtn.style.fontSize = '10px';
+            editBtn.style.padding = '2px 6px';
+            editBtn.style.height = 'auto';
+            
+            // Apply consistent button styling with hover effect
+            UI.styleButtonWithHover(editBtn, 'info');
+            
+            ruleActions.appendChild(editBtn);
+
             const moveBtn = createSmallButton('Move to Unsorted', () => {
                 // Move rule to ungrouped
                 const ruleToMove = autoFixSettings.ruleGroups[groupIndex].rules[ruleIndex];
@@ -1397,49 +1626,16 @@
                 autoFixSettings.ruleGroups[groupIndex].rules.splice(ruleIndex, 1);
                 saveSettings();
                 
-                // Just remove this rule element instead of refreshing everything
-                ruleElement.remove();
-                
-                // Update group count in header
-                const groupContainer = ruleElement.closest('div[style*="border: 1px solid #dee2e6"]');
-                const countSpan = groupContainer.querySelector('span[style*="font-size: 11px"]');
-                if (countSpan) {
-                    const newCount = autoFixSettings.ruleGroups[groupIndex].rules.length;
-                    const countText = `${newCount} rule${newCount === 1 ? '' : 's'}`;
-                    // Update the count part only (it's after the last | in the text)
-                    const fullText = countSpan.innerHTML;
-                    const parts = fullText.split(' | ');
-                    parts[parts.length - 1] = countText;
-                    countSpan.innerHTML = parts.join(' | ');
-                }
-                
-                // Update ungrouped count if ungrouped section exists
-                const allContainers = document.querySelectorAll('div[style*="border: 1px solid #dee2e6"]');
-                allContainers.forEach(container => {
-                    const header = container.querySelector('div[style*="background: #fff3cd"]');
-                    if (header) { // This is the ungrouped container
-                        const ungroupedCountSpan = container.querySelector('span[style*="font-size: 11px"]');
-                        if (ungroupedCountSpan) {
-                            const newUngroupedCount = autoFixSettings.ungroupedRules.length;
-                            const ungroupedCountText = `${newUngroupedCount} rule${newUngroupedCount === 1 ? '' : 's'}`;
-                            ungroupedCountSpan.textContent = ungroupedCountText;
-                        }
-                    }
-                });
-                
-                // If no rules left in group, show empty message or collapse
-                const parentContainer = ruleElement.closest('div[style*="display: none"]').parentElement;
-                const rulesContainer = parentContainer.querySelector('div[style*="padding: 0"]');
-                if (rulesContainer && rulesContainer.children.length === 0) {
-                    const emptyMsg = document.createElement('div');
-                    emptyMsg.textContent = 'No rules in this group';
-                    emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
-                    rulesContainer.appendChild(emptyMsg);
-                }
+                // Refresh the entire container to properly update UI
+                refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             });
             moveBtn.style.fontSize = '10px';
             moveBtn.style.padding = '2px 6px';
             moveBtn.style.height = 'auto';
+            
+            // Apply consistent button styling with hover effect
+            UI.styleButtonWithHover(moveBtn, 'success');
+            
             ruleActions.appendChild(moveBtn);
         }
 
@@ -1465,29 +1661,40 @@
                 autoFixSettings.ungroupedRules.splice(idx, 1);
                 saveSettings();
                 
-                // Just remove this rule element instead of refreshing everything
-                ruleElement.remove();
-                
-                // Update ungrouped count in header
-                const ungroupedContainer = ruleElement.closest('div[style*="border: 1px solid #dee2e6"]');
-                const countSpan = ungroupedContainer.querySelector('span[style*="font-size: 11px"]');
-                if (countSpan) {
-                    const newCount = autoFixSettings.ungroupedRules.length;
-                    const countText = `${newCount} rule${newCount === 1 ? '' : 's'}`;
-                    countSpan.textContent = countText;
-                }
-                
-                // If no ungrouped rules left, show empty message or hide section
-                const parentContainer = ruleElement.closest('div[style*="display: none"]').parentElement;
-                const rulesContainer = parentContainer.querySelector('div[style*="padding: 0"]');
-                if (rulesContainer && rulesContainer.children.length === 0) {
-                    const emptyMsg = document.createElement('div');
-                    emptyMsg.textContent = 'No unsorted rules';
-                    emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
-                    rulesContainer.appendChild(emptyMsg);
-                }
+                // Refresh the entire container to properly update UI
+                refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             }
         );
+
+        // Add edit and move to group options
+        const ruleActions = ruleElement.querySelector('div > div'); // Button container
+        if (ruleActions) {
+            // Add edit button with proper hover effect
+            const editBtn = createSmallButton('Edit', () => {
+                showEditRulePopup(rule, null, ruleIndex, true, ruleElement);
+            });
+            editBtn.style.fontSize = '10px';
+            editBtn.style.padding = '2px 6px';
+            editBtn.style.height = 'auto';
+            
+            // Apply consistent button styling with hover effect
+            UI.styleButtonWithHover(editBtn, 'info');
+            
+            ruleActions.appendChild(editBtn);
+
+            // Add move to group button with proper hover effect
+            const moveToGroupBtn = createSmallButton('Move to Group', () => {
+                showMoveToGroupPopup(rule, ruleIndex);
+            });
+            moveToGroupBtn.style.fontSize = '10px';
+            moveToGroupBtn.style.padding = '2px 6px';
+            moveToGroupBtn.style.height = 'auto';
+            
+            // Apply consistent button styling with hover effect
+            UI.styleButtonWithHover(moveToGroupBtn, 'success');
+            
+            ruleActions.appendChild(moveToGroupBtn);
+        }
 
         ruleElement.style.margin = '0';
         ruleElement.style.borderRadius = '0';
@@ -1496,6 +1703,299 @@
         ruleElement.style.borderTop = 'none';
 
         return ruleElement;
+    }
+
+    // Function to show edit rule popup
+    function showEditRulePopup(rule, groupIndex, ruleIndex, isUngrouped, ruleElement) {
+        // Create backdrop
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10004';
+
+        // Create popup
+        const popup = UI.createPopup({
+            minWidth: '400px',
+            maxWidth: '500px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none'
+        });
+
+        // Create header
+        const header = UI.createPopupHeader('Edit Rule', () => {
+            document.body.removeChild(backdrop);
+        });
+        popup.appendChild(header);
+
+        // Create form
+        const form = document.createElement('form');
+        form.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 20px;
+        `;
+
+        // Description field
+        const descriptionField = createFormField('Description', 'text', rule.description || '');
+        
+        // Find field
+        const findField = createFormField('Find Pattern', 'text', rule.find || '');
+        
+        // Replace field
+        const replaceField = createFormField('Replace With', 'text', 
+            typeof rule.replace === 'string' ? rule.replace : '');
+        
+        // Flags field
+        const flagsField = createFormField('Flags', 'text', rule.flags || 'gi');
+        
+        // Enhanced boundary checkbox
+        const enhancedBoundaryContainer = document.createElement('div');
+        enhancedBoundaryContainer.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        `;
+
+        const enhancedBoundaryCheckbox = document.createElement('input');
+        enhancedBoundaryCheckbox.type = 'checkbox';
+        enhancedBoundaryCheckbox.id = 'edit-enhanced-boundary-checkbox';
+        enhancedBoundaryCheckbox.checked = rule.enhancedBoundary || false;
+        enhancedBoundaryCheckbox.style.cssText = `
+            margin: 0;
+            cursor: pointer;
+        `;
+
+        const enhancedBoundaryLabel = document.createElement('label');
+        enhancedBoundaryLabel.setAttribute('for', 'edit-enhanced-boundary-checkbox');
+        enhancedBoundaryLabel.innerHTML = `
+            <strong>Enhanced Boundary Mode</strong> - Automatically handles brackets, punctuation, etc. 
+            <br><span style="font-size: 12px; color: #666; font-style: italic;">
+            Add "e" to flags and use simple patterns like "\\bza\\b" instead of complex lookarounds
+            </span>
+        `;
+        enhancedBoundaryLabel.style.cssText = `
+            font-size: 14px;
+            cursor: pointer;
+            color: #333;
+            line-height: 1.4;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        enhancedBoundaryContainer.appendChild(enhancedBoundaryCheckbox);
+        enhancedBoundaryContainer.appendChild(enhancedBoundaryLabel);
+
+        form.appendChild(descriptionField);
+        form.appendChild(findField);
+        form.appendChild(replaceField);
+        form.appendChild(flagsField);
+        form.appendChild(enhancedBoundaryContainer);
+
+        // Buttons
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 16px;
+        `;
+
+        const saveBtn = createSmallButton('Save', () => {
+            const description = descriptionField.querySelector('input').value.trim();
+            const find = findField.querySelector('input').value.trim();
+            const replace = replaceField.querySelector('input').value.trim();
+            const flags = flagsField.querySelector('input').value.trim();
+            const enhancedBoundary = enhancedBoundaryCheckbox.checked;
+
+            if (!find) {
+                alert('Find pattern is required.');
+                return;
+            }
+
+            // Update the rule
+            const updatedRule = {
+                ...rule,
+                description: description || `Rule ${ruleIndex + 1}`,
+                find: find,
+                replace: replace,
+                flags: flags,
+                enhancedBoundary: enhancedBoundary
+            };
+
+            // Save to the appropriate location
+            if (isUngrouped) {
+                autoFixSettings.ungroupedRules[ruleIndex] = updatedRule;
+            } else {
+                autoFixSettings.ruleGroups[groupIndex].rules[ruleIndex] = updatedRule;
+            }
+
+            saveSettings();
+            refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+            document.body.removeChild(backdrop);
+        });
+
+        saveBtn.style.backgroundColor = '#007bff';
+        saveBtn.style.color = 'white';
+        saveBtn.style.borderColor = '#007bff';
+
+        const cancelBtn = createSmallButton('Cancel', () => {
+            document.body.removeChild(backdrop);
+        });
+
+        buttonContainer.appendChild(cancelBtn);
+        buttonContainer.appendChild(saveBtn);
+        form.appendChild(buttonContainer);
+
+        popup.appendChild(form);
+        backdrop.appendChild(popup);
+        popup.style.display = 'block';
+        document.body.appendChild(backdrop);
+
+        // Focus the description field
+        setTimeout(() => {
+            const descInput = descriptionField.querySelector('input');
+            if (descInput) descInput.focus();
+        }, 100);
+    }
+
+    // Function to show move to group popup
+    function showMoveToGroupPopup(rule, ruleIndex) {
+        // Check if there are any groups to move to
+        if (!autoFixSettings.ruleGroups || autoFixSettings.ruleGroups.length === 0) {
+            alert('No groups available. Create a group first by downloading rules.');
+            return;
+        }
+
+        // Create backdrop
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10004';
+
+        // Create popup
+        const popup = UI.createPopup({
+            minWidth: '350px',
+            maxWidth: '450px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none'
+        });
+
+        // Create header
+        const header = UI.createPopupHeader('Move Rule to Group', () => {
+            document.body.removeChild(backdrop);
+        });
+        popup.appendChild(header);
+
+        // Content
+        const content = document.createElement('div');
+        content.style.cssText = `
+            padding: 20px;
+        `;
+
+        const instructions = document.createElement('p');
+        instructions.textContent = 'Select a group to move this rule to:';
+        instructions.style.cssText = `
+            margin: 0 0 16px 0;
+            color: #333;
+        `;
+        content.appendChild(instructions);
+
+        // Rule preview
+        const rulePreview = document.createElement('div');
+        rulePreview.style.cssText = `
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 16px;
+            font-size: 12px;
+            font-family: monospace;
+        `;
+        rulePreview.innerHTML = `
+            <div><strong>Rule:</strong> ${rule.description || 'Unnamed Rule'}</div>
+            <div><strong>Find:</strong> /${rule.find}/${rule.flags || 'gi'}</div>
+            <div><strong>Replace:</strong> ${rule.replace}</div>
+        `;
+        content.appendChild(rulePreview);
+
+        // Group selection
+        const groupContainer = document.createElement('div');
+        groupContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 16px;
+        `;
+
+        autoFixSettings.ruleGroups.forEach((group, groupIndex) => {
+            const groupOption = document.createElement('div');
+            groupOption.style.cssText = `
+                border: 1px solid #dee2e6;
+                border-radius: 4px;
+                padding: 12px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                background: #fff;
+            `;
+
+            groupOption.addEventListener('mouseenter', () => {
+                groupOption.style.backgroundColor = '#f8f9fa';
+                groupOption.style.borderColor = '#007bff';
+            });
+
+            groupOption.addEventListener('mouseleave', () => {
+                groupOption.style.backgroundColor = '#fff';
+                groupOption.style.borderColor = '#dee2e6';
+            });
+
+            groupOption.innerHTML = `
+                <div style="font-weight: 500; margin-bottom: 4px;">${group.title}</div>
+                <div style="font-size: 12px; color: #666;">${group.description}</div>
+                <div style="font-size: 11px; color: #999; margin-top: 4px;">
+                    ${group.rules.length} rule${group.rules.length === 1 ? '' : 's'} | Author: ${group.author}
+                </div>
+            `;
+
+            groupOption.addEventListener('click', () => {
+                // Move the rule to the selected group
+                const ruleToMove = autoFixSettings.ungroupedRules[ruleIndex];
+                autoFixSettings.ruleGroups[groupIndex].rules.push(ruleToMove);
+                autoFixSettings.ungroupedRules.splice(ruleIndex, 1);
+                saveSettings();
+                refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+                document.body.removeChild(backdrop);
+            });
+
+            groupContainer.appendChild(groupOption);
+        });
+
+        content.appendChild(groupContainer);
+
+        // Cancel button
+        const cancelBtn = createSmallButton('Cancel', () => {
+            document.body.removeChild(backdrop);
+        });
+        cancelBtn.style.cssText += 'display: block; margin: 0 auto;';
+        content.appendChild(cancelBtn);
+
+        popup.appendChild(content);
+        backdrop.appendChild(popup);
+        popup.style.display = 'block';
+        document.body.appendChild(backdrop);
     }
 
     // Function to refresh the custom regex rules display (legacy compatibility)
@@ -5334,10 +5834,14 @@
             fixedText = highlightMismatchedBracketsWithEmojis(fixedText);
         }
 
-        // Fix words ending with dash to em dash (only at end of words, not hyphens)
+        // Fix words ending with dash to em/en dash (only at end of words, not hyphens)
         if (autoFixSettings.emDashFixes) {
+            // Get the dash type setting to determine which dash to use
+            const dashType = autoFixSettings.dashType || 'em';
+            const dashChar = dashType === 'em' ? '—' : '–'; // em dash or en dash
+            
             // Pattern: word followed by dash at end of word boundary
-            fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, '$1—');
+            fixedText = fixedText.replace(/(\w)-(?=\s|$)/g, `$1${dashChar}`);
         }
 
         // Fix stutter emdashes (e.g., "Ja— ja— ja— ja— ja— jacked" → "Ja-ja-ja-ja-ja-jacked")
@@ -5729,18 +6233,28 @@
     function updateButtonState() {
         if (!toggleButton) return;
 
-        if (emDashEnabled) {
+        // Get current dash settings
+        const dashType = autoFixSettings.dashType || 'em';
+        const dashTrigger = autoFixSettings.dashTrigger || autoFixSettings.emDashMode || '3';
+        const dashChar = dashType === 'em' ? '—' : '–';
+        const dashName = dashType === 'em' ? 'Em Dash' : 'En Dash';
+        
+        // Update the dash character in the button
+        const dashText = toggleButton.querySelector('.dash-text');
+        if (dashText) {
+            dashText.textContent = dashChar;
+        }
+
+        if (emDashEnabled && dashTrigger !== 'off') {
             toggleButton.style.backgroundColor = '#1e40af'; // Darker blue (less cyan)
             toggleButton.style.borderColor = '#1e40af';
             toggleButton.style.color = '#fff';
-            toggleButton.title = 'Toggle Em Dash Auto-Replace (Currently: On)';
-            toggleButton.innerHTML = '— On';
+            toggleButton.title = `Toggle ${dashName} Auto-Replace (Currently: ON). Click gear icon for settings.`;
         } else {
             toggleButton.style.backgroundColor = 'transparent';
             toggleButton.style.borderColor = '#000';
             toggleButton.style.color = '#000';
-            toggleButton.title = 'Toggle Em Dash Auto-Replace (Currently: Off)';
-            toggleButton.innerHTML = '— Off';
+            toggleButton.title = `Toggle ${dashName} Auto-Replace (Currently: OFF). Click gear icon for settings.`;
         }
     }
 
@@ -5764,11 +6278,12 @@
             return;
         }
 
-        // Prevent the default dash and insert em dash instead
+        // Prevent the default dash and insert dash based on settings
         event.preventDefault();
         
-        // Insert em dash
-        const emDash = '—';
+        // Get the dash type from settings (em dash or en dash)
+        const dashType = autoFixSettings.dashType || 'em';
+        const dashChar = dashType === 'em' ? '—' : '–'; // em dash or en dash
         
         if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
             // Handle textarea and input elements
@@ -5776,7 +6291,7 @@
             const end = target.selectionEnd;
             const value = target.value;
             
-            target.value = value.slice(0, start) + emDash + value.slice(end);
+            target.value = value.slice(0, start) + dashChar + value.slice(end);
             target.selectionStart = target.selectionEnd = start + 1;
             
             // Trigger input event to notify any listeners
@@ -5787,7 +6302,7 @@
             if (selection.rangeCount > 0) {
                 const range = selection.getRangeAt(0);
                 range.deleteContents();
-                range.insertNode(document.createTextNode(emDash));
+                range.insertNode(document.createTextNode(dashChar));
                 range.collapse(false);
                 selection.removeAllRanges();
                 selection.addRange(range);
@@ -5915,46 +6430,88 @@
             // Handle textarea/input - use stored selection positions to avoid duplicate text issues
             const value = activeElement.value;
             
-            // Use stored selection positions if available, otherwise fall back to indexOf
-            let selectedIndex = -1;
+            // Always use stored selection positions for accuracy with multiline text
             if (currentSelection.selectionStart !== null && currentSelection.selectionEnd !== null) {
-                // Verify the stored positions still contain the expected text
-                const storedText = value.slice(currentSelection.selectionStart, currentSelection.selectionEnd);
+                const selectedIndex = currentSelection.selectionStart;
+                const selectedEndIndex = currentSelection.selectionEnd;
+                
+                // Double-check that the stored positions contain the expected text
+                const storedText = value.slice(selectedIndex, selectedEndIndex);
                 if (storedText === selectedText) {
-                    selectedIndex = currentSelection.selectionStart;
-                    console.log('Using stored selection positions:', selectedIndex, 'to', currentSelection.selectionEnd);
+                    console.log('Using stored selection positions:', selectedIndex, 'to', selectedEndIndex);
+                    
+                    const newValue = value.slice(0, selectedIndex) + formattedText + value.slice(selectedEndIndex);
+                    activeElement.value = newValue;
+                    
+                    // Re-select the formatted text to allow for additional formatting
+                    const newEndIndex = selectedIndex + formattedText.length;
+                    activeElement.selectionStart = selectedIndex;
+                    activeElement.selectionEnd = newEndIndex;
+                    
+                    // Update current selection for potential additional formatting
+                    currentSelection.text = formattedText;
+                    currentSelection.selectionStart = selectedIndex;
+                    currentSelection.selectionEnd = newEndIndex;
+                    
+                    // Trigger input event
+                    activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+                    console.log('Text formatted in textarea/input using exact positions, text re-selected');
                 } else {
-                    console.log('Stored positions invalid, falling back to indexOf');
-                    selectedIndex = value.indexOf(selectedText);
+                    console.log('Stored positions contain unexpected text. Expected:', selectedText, 'Found:', storedText);
+                    console.log('Selection may have changed since capture. Trying fallback approach...');
+                    
+                    // Fallback: try to find the text near the stored position
+                    const searchStart = Math.max(0, selectedIndex - 50);
+                    const searchEnd = Math.min(value.length, selectedEndIndex + 50);
+                    const searchArea = value.slice(searchStart, searchEnd);
+                    const localIndex = searchArea.indexOf(selectedText);
+                    
+                    if (localIndex !== -1) {
+                        const actualIndex = searchStart + localIndex;
+                        console.log('Found text at nearby position:', actualIndex);
+                        
+                        const newValue = value.slice(0, actualIndex) + formattedText + value.slice(actualIndex + selectedText.length);
+                        activeElement.value = newValue;
+                        
+                        // Re-select the formatted text
+                        activeElement.selectionStart = actualIndex;
+                        activeElement.selectionEnd = actualIndex + formattedText.length;
+                        
+                        // Update current selection
+                        currentSelection.text = formattedText;
+                        currentSelection.selectionStart = actualIndex;
+                        currentSelection.selectionEnd = actualIndex + formattedText.length;
+                        
+                        // Trigger input event
+                        activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+                        console.log('Text formatted using fallback position search');
+                    } else {
+                        console.log('Could not locate selected text for formatting');
+                    }
                 }
             } else {
-                selectedIndex = value.indexOf(selectedText);
-            }
-            
-            if (selectedIndex !== -1) {
-                const newValue = value.slice(0, selectedIndex) + formattedText + value.slice(selectedIndex + selectedText.length);
-                activeElement.value = newValue;
-                
-                // Re-select the formatted text to allow for additional formatting
-                activeElement.selectionStart = selectedIndex;
-                activeElement.selectionEnd = selectedIndex + formattedText.length;
-                
-                // Update current selection for potential additional formatting
-                currentSelection.text = formattedText;
-                currentSelection.selectionStart = selectedIndex;
-                currentSelection.selectionEnd = selectedIndex + formattedText.length;
-                
-                // Trigger input event
-                activeElement.dispatchEvent(new Event('input', { bubbles: true }));
-                console.log('Text formatted in textarea/input, text re-selected');
-            } else {
-                console.log('Could not find selected text in input value');
+                console.log('No stored selection positions available - cannot format multiline text accurately');
             }
         } else if (activeElement.isContentEditable) {
-            // For contenteditable, try to use execCommand or innerHTML manipulation
+            // For contenteditable, try to use the stored range for better multiline support
             try {
                 const selection = window.getSelection();
-                if (selection.rangeCount > 0) {
+                if (currentSelection.selectionRange) {
+                    // Use the stored range for better accuracy with multiline selections
+                    const range = currentSelection.selectionRange;
+                    range.deleteContents();
+                    const textNode = document.createTextNode(formattedText);
+                    range.insertNode(textNode);
+                    
+                    // Re-select the formatted text
+                    range.selectNodeContents(textNode);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    
+                    // Update current selection
+                    currentSelection.text = formattedText;
+                    currentSelection.selectionRange = range.cloneRange();
+                } else if (selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
                     range.deleteContents();
                     const textNode = document.createTextNode(formattedText);
@@ -5977,6 +6534,13 @@
                 console.log('Text formatted in contenteditable, text re-selected');
             } catch (e) {
                 console.log('Error formatting contenteditable:', e);
+                // Fallback: replace in innerHTML
+                try {
+                    activeElement.innerHTML = activeElement.innerHTML.replace(selectedText, formattedText);
+                    activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+                } catch (fallbackError) {
+                    console.log('Fallback formatting also failed:', fallbackError);
+                }
             }
         }
 
@@ -6050,10 +6614,19 @@
         let replacementMade = false;
         let cursorAdjustment = 0;
 
-        // Get the em dash mode setting (default to '3' if not set)
-        const emDashMode = autoFixSettings.emDashMode || '3';
+        // Get the dash settings (use new settings first, fall back to old for compatibility)
+        const dashType = autoFixSettings.dashType || 'em';
+        const dashTrigger = autoFixSettings.dashTrigger || autoFixSettings.emDashMode || '3';
+        
+        // Skip if trigger pattern is set to 'off'
+        if (dashTrigger === 'off') {
+            return;
+        }
+        
+        // Determine the replacement character
+        const dashChar = dashType === 'em' ? '—' : '–'; // em dash or en dash
 
-        if (emDashMode === '3') {
+        if (dashTrigger === '3') {
             // Replace --- (three dashes)
             if (newContent.includes('---')) {
                 const beforeReplace = newContent.substring(0, cursorPosition);
@@ -6061,24 +6634,24 @@
                 // Count replacements before cursor to adjust cursor position
                 const beforeMatches = (beforeReplace.match(/---/g) || []).length;
                 
-                newContent = newContent.replace(/---/g, '—');
+                newContent = newContent.replace(/---/g, dashChar);
                 replacementMade = true;
-                // Each --- becomes — (3 chars become 1, so -2 adjustment per replacement)
+                // Each --- becomes dashChar (3 chars become 1, so -2 adjustment per replacement)
                 cursorAdjustment = -(beforeMatches * 2);
             }
-        } else if (emDashMode === '2') {
+        } else if (dashTrigger === '2') {
             // Replace -- (two dashes) but avoid replacing if it's part of a longer sequence
             if (newContent.includes('--')) {
                 const beforeReplace = newContent.substring(0, cursorPosition);
                 
                 // Count -- that are not part of --- (we need to be careful here)
-                // Replace -- with — but avoid replacing if it's part of a longer sequence
+                // Replace -- with dashChar but avoid replacing if it's part of a longer sequence
                 const beforeMatches = (beforeReplace.match(/(?<!-)--(?!-)/g) || []).length;
                 
-                newContent = newContent.replace(/(?<!-)--(?!-)/g, '—');
+                newContent = newContent.replace(/(?<!-)--(?!-)/g, dashChar);
                 if (beforeMatches > 0) {
                     replacementMade = true;
-                    // Each -- becomes — (2 chars become 1, so -1 adjustment per replacement)
+                    // Each -- becomes dashChar (2 chars become 1, so -1 adjustment per replacement)
                     cursorAdjustment = -(beforeMatches * 1);
                 }
             }
@@ -6150,17 +6723,22 @@
                 // Store the selection with position information to handle duplicates
                 let selectionStart = null;
                 let selectionEnd = null;
+                let selectionRange = null;
                 
                 if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
                     selectionStart = activeElement.selectionStart;
                     selectionEnd = activeElement.selectionEnd;
+                } else if (activeElement.isContentEditable && selection.rangeCount > 0) {
+                    // Store the actual range for contenteditable elements
+                    selectionRange = selection.getRangeAt(0).cloneRange();
                 }
                 
                 currentSelection = {
                     text: selectedText,
                     activeElement: activeElement,
                     selectionStart: selectionStart,
-                    selectionEnd: selectionEnd
+                    selectionEnd: selectionEnd,
+                    selectionRange: selectionRange
                 };
                 
                 // Better positioning for textarea elements
