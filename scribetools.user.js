@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.11
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -2118,14 +2118,45 @@
     function processImportedData(dataString, source) {
         try {
             const importedData = JSON.parse(dataString);
-            let importedRules;
+            let importedRules = [];
             
-            // Handle both single rule objects and arrays of rules
+            // Handle different import formats with backwards compatibility
             if (Array.isArray(importedData)) {
+                // Old format: simple array of rules
                 importedRules = importedData;
-            } else if (importedData && typeof importedData === 'object' && importedData.find && importedData.replace) {
-                // Single rule object
-                importedRules = [importedData];
+            } else if (importedData && typeof importedData === 'object') {
+                if (importedData.find && importedData.replace) {
+                    // Single rule object (old format)
+                    importedRules = [importedData];
+                } else if (importedData.rules && Array.isArray(importedData.rules)) {
+                    // New format with metadata wrapper (like rules.json)
+                    importedRules = importedData.rules;
+                } else if (importedData.ruleGroups || importedData.ungroupedRules) {
+                    // New export format with rule groups
+                    importedRules = [];
+                    
+                    // Extract rules from rule groups
+                    if (importedData.ruleGroups && Array.isArray(importedData.ruleGroups)) {
+                        importedData.ruleGroups.forEach(group => {
+                            if (group.rules && Array.isArray(group.rules)) {
+                                importedRules = [...importedRules, ...group.rules];
+                            }
+                        });
+                    }
+                    
+                    // Extract ungrouped rules
+                    if (importedData.ungroupedRules && Array.isArray(importedData.ungroupedRules)) {
+                        importedRules = [...importedRules, ...importedData.ungroupedRules];
+                    }
+                    
+                    // Extract legacy rules
+                    if (importedData.legacyRules && Array.isArray(importedData.legacyRules)) {
+                        importedRules = [...importedRules, ...importedData.legacyRules];
+                    }
+                } else {
+                    alert(`Invalid format. Please ${source === 'file' ? 'select a valid JSON file' : 'copy valid JSON data'} containing regex rules.`);
+                    return;
+                }
             } else {
                 alert(`Invalid format. Please ${source === 'file' ? 'select a valid JSON file' : 'copy valid JSON data'} containing regex rules.`);
                 return;
@@ -2141,30 +2172,389 @@
                 return;
             }
             
-            // Add to existing rules instead of replacing
-            autoFixSettings.customRegexRules = [...(autoFixSettings.customRegexRules || []), ...validRules];
+            // Add to ungrouped rules (new structure) instead of legacy customRegexRules
+            if (!autoFixSettings.ungroupedRules) {
+                autoFixSettings.ungroupedRules = [];
+            }
+            autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validRules];
+            
             saveSettings();
-            refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+            refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             alert(`Successfully imported ${validRules.length} regex rule(s) from ${source}.`);
         } catch (error) {
             alert(`Error parsing data from ${source}: ` + error.message);
         }
     }
 
-    // Function to export regex rules
+    // Function to export regex rules with options
     function exportRegexRules() {
-        if (!autoFixSettings.customRegexRules || autoFixSettings.customRegexRules.length === 0) {
-            alert('No custom regex rules to export.');
+        // Check if there are any rules to export (new structure or legacy)
+        const hasRuleGroups = autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0;
+        const hasUngroupedRules = autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0;
+        const hasLegacyRules = autoFixSettings.customRegexRules && autoFixSettings.customRegexRules.length > 0;
+
+        if (!hasRuleGroups && !hasUngroupedRules && !hasLegacyRules) {
+            // Show export options popup even if no current rules
+            showExportOptionsPopup();
             return;
         }
 
-        const dataStr = JSON.stringify(autoFixSettings.customRegexRules, null, 2);
+        // If we have rules, show export options
+        showExportOptionsPopup();
+    }
+
+    // Function to show export options popup
+    function showExportOptionsPopup() {
+        // Create backdrop
+        const backdrop = UI.createBackdrop((e) => {
+            if (e.target === backdrop) {
+                document.body.removeChild(backdrop);
+            }
+        });
+        backdrop.style.display = 'flex';
+        backdrop.style.alignItems = 'center';
+        backdrop.style.justifyContent = 'center';
+        backdrop.style.zIndex = '10004';
+
+        // Create popup
+        const popup = UI.createPopup({
+            minWidth: '400px',
+            maxWidth: '500px',
+            position: 'relative',
+            top: 'auto',
+            left: 'auto',
+            transform: 'none'
+        });
+
+        // Create header
+        const header = UI.createPopupHeader('Export Rules', () => {
+            document.body.removeChild(backdrop);
+        });
+        popup.appendChild(header);
+
+        // Export options
+        const optionsContainer = document.createElement('div');
+        optionsContainer.style.cssText = `margin-bottom: 20px;`;
+
+        // Check what we have available to export
+        const hasRuleGroups = autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0;
+        const hasUngroupedRules = autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0;
+        const hasLegacyRules = autoFixSettings.customRegexRules && autoFixSettings.customRegexRules.length > 0;
+
+        if (hasRuleGroups || hasUngroupedRules || hasLegacyRules) {
+            // Option 1: Export in old simple array format (backwards compatible)
+            const oldFormatBtn = UI.createButton('Export as Simple Array (Old Format)', () => {
+                exportCurrentRulesOldFormat();
+                document.body.removeChild(backdrop);
+            }, {
+                styles: {
+                    width: '100%',
+                    marginBottom: '10px',
+                    padding: '12px',
+                    backgroundColor: '#007bff',
+                    color: 'white',
+                    border: '1px solid #007bff'
+                }
+            });
+            optionsContainer.appendChild(oldFormatBtn);
+
+            // Option 2: Export with new structure (includes groups)
+            const newFormatBtn = UI.createButton('Export with Groups (New Format)', () => {
+                exportCurrentRules();
+                document.body.removeChild(backdrop);
+            }, {
+                styles: {
+                    width: '100%',
+                    marginBottom: '10px',
+                    padding: '12px',
+                    backgroundColor: '#6c757d',
+                    color: 'white',
+                    border: '1px solid #6c757d'
+                }
+            });
+            optionsContainer.appendChild(newFormatBtn);
+
+            // Show what will be exported
+            const infoDiv = document.createElement('div');
+            infoDiv.style.cssText = `
+                background: #f8f9fa;
+                border: 1px solid #dee2e6;
+                border-radius: 6px;
+                padding: 12px;
+                margin-bottom: 15px;
+                font-size: 12px;
+                color: #666;
+            `;
+            
+            let infoText = 'Will export:\n';
+            if (hasRuleGroups) {
+                const totalGroupRules = autoFixSettings.ruleGroups.reduce((total, group) => total + (group.rules ? group.rules.length : 0), 0);
+                infoText += `• ${autoFixSettings.ruleGroups.length} rule group(s) with ${totalGroupRules} rule(s)\n`;
+            }
+            if (hasUngroupedRules) {
+                infoText += `• ${autoFixSettings.ungroupedRules.length} ungrouped rule(s)\n`;
+            }
+            if (hasLegacyRules) {
+                infoText += `• ${autoFixSettings.customRegexRules.length} legacy rule(s)\n`;
+            }
+            
+            infoDiv.textContent = infoText;
+            optionsContainer.appendChild(infoDiv);
+        }
+
+        // Option 3: Export built-in rules in old format
+        const builtinRulesBtn = UI.createButton('Export Built-in Rules (Old Format)', () => {
+            exportBuiltinRules();
+            document.body.removeChild(backdrop);
+        }, {
+            styles: {
+                width: '100%',
+                marginBottom: '10px',
+                padding: '12px',
+                backgroundColor: '#28a745',
+                color: 'white',
+                border: '1px solid #28a745'
+            }
+        });
+        optionsContainer.appendChild(builtinRulesBtn);
+
+        // Add description for built-in rules option
+        const builtinInfoDiv = document.createElement('div');
+        builtinInfoDiv.style.cssText = `
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: #155724;
+        `;
+        builtinInfoDiv.textContent = 'Export the built-in rule set (zilla\'s Rules) in the old simple array format';
+        optionsContainer.appendChild(builtinInfoDiv);
+
+        popup.appendChild(optionsContainer);
+        backdrop.appendChild(popup);
+        popup.style.display = 'block';
+        document.body.appendChild(backdrop);
+    }
+
+    // Function to export current rules in old simple array format
+    function exportCurrentRulesOldFormat() {
+        let allRules = [];
+        
+        // Collect all rules from different sources
+        if (autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0) {
+            autoFixSettings.ruleGroups.forEach(group => {
+                if (group.rules && Array.isArray(group.rules)) {
+                    allRules = [...allRules, ...group.rules];
+                }
+            });
+        }
+        
+        if (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0) {
+            allRules = [...allRules, ...autoFixSettings.ungroupedRules];
+        }
+        
+        if (autoFixSettings.customRegexRules && autoFixSettings.customRegexRules.length > 0) {
+            allRules = [...allRules, ...autoFixSettings.customRegexRules];
+        }
+        
+        // Clean up rules to ensure they have the standard format
+        const cleanRules = allRules.map(rule => ({
+            description: rule.description || "Imported rule",
+            find: rule.find,
+            replace: rule.replace,
+            flags: rule.flags || "g",
+            enabled: rule.enabled !== false // Default to true if not specified
+        }));
+
+        const dataStr = JSON.stringify(cleanRules, null, 2);
         const dataBlob = new Blob([dataStr], { type: 'application/json' });
         const url = URL.createObjectURL(dataBlob);
         
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'genius-custom-regex-rules.json';
+        link.download = 'my-rules-simple.json';
+        link.click();
+        
+        URL.revokeObjectURL(url);
+    }
+
+    // Function to export current rules with new structure (includes groups)
+    function exportCurrentRules() {
+        const exportData = {
+            metadata: {
+                author: "Custom Export",
+                title: "My Custom Rules",
+                description: "Exported custom rules",
+                version: "1.0",
+                exportDate: new Date().toISOString()
+            },
+            ruleGroups: autoFixSettings.ruleGroups || [],
+            ungroupedRules: autoFixSettings.ungroupedRules || [],
+            legacyRules: autoFixSettings.customRegexRules || []
+        };
+
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'my-custom-rules-with-groups.json';
+        link.click();
+        
+        URL.revokeObjectURL(url);
+    }
+
+    // Function to export built-in rules in old simple array format
+    async function exportBuiltinRules() {
+        // Built-in rules in old simple array format
+        const builtinRules = [
+            {
+                description: "dat -> that",
+                find: "\\bdat\\b",
+                replace: "that",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "Curly double quotes -> straight double quotes",
+                find: "[\\u201c\\u201d]",
+                replace: "\"",
+                flags: "g",
+                enabled: true
+            },
+            {
+                description: "za/Za -> 'za or 'Za",
+                find: "\\b([Zz]a)\\b",
+                replace: "'$1",
+                flags: "ge",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "Curly apostrophes -> straight apostrophes",
+                find: "[\\u2018\\u2019\\u2032]",
+                replace: "'",
+                flags: "g",
+                enabled: true,
+                enhancedBoundary: false
+            },
+            {
+                description: "ur -> your",
+                find: "\\bur\\b",
+                replace: "your",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "Capitalize cali",
+                find: "\\bcali\\b",
+                replace: "Cali",
+                flags: "ge",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "Capitalize backwood",
+                find: "\\bbackwood(s?)\\b",
+                replace: "Backwood$1",
+                flags: "ge",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "Capitalize looseleaf",
+                find: "\\blooseleaf\\b",
+                replace: "LooseLeaf",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "fix double",
+                find: "''",
+                replace: "'",
+                flags: "gi",
+                enabled: true,
+                enhancedBoundary: false
+            },
+            {
+                description: "ya -> your",
+                find: "ya",
+                replace: "your",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "y'know -> you know",
+                find: "y'know",
+                replace: "you know",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "wassup -> what's up",
+                find: "wassup",
+                replace: "what's up",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "d'fuck -> the fuck",
+                find: "d'fuck",
+                replace: "the fuck",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "'cuz -> cause",
+                find: "'cuz",
+                replace: "'cause",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "tooly -> toolie",
+                find: "tooly",
+                replace: "toolie",
+                flags: "gie",
+                enabled: true,
+                enhancedBoundary: true
+            },
+            {
+                description: "em comma to em",
+                find: "—,",
+                replace: "—",
+                flags: "g",
+                enabled: true,
+                enhancedBoundary: false
+            },
+            {
+                description: "double single quote -> one",
+                find: "''",
+                replace: "'",
+                flags: "g",
+                enabled: true,
+                enhancedBoundary: false
+            }
+        ];
+
+        const dataStr = JSON.stringify(builtinRules, null, 2);
+        const dataBlob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(dataBlob);
+        
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'zillas-rules.json';
         link.click();
         
         URL.revokeObjectURL(url);
