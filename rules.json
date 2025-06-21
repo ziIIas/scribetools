@@ -4,7 +4,7 @@
     "title": "zilla's Rules",
     "description": "Misc. rules for text processing and corrections",
     "id": "1",
-    "version": "1"
+    "version": "2"
   },
   "rules": [
     {
@@ -46,28 +46,101 @@
       "enabled": true,
       "enhancedBoundary": true
     },
-    {
-      "description": "Curly apostrophes -> straight apostrophes",
-      "find": "[\\u2018\\u2019]",
-      "replace": "'",
-      "flags": "g",
-      "enabled": true
-    },
-    {
-      "description": "ur -> your",
-      "find": "\\bur\\b",
-      "replace": "your",
-      "flags": "gie",
-      "enabled": true,
-      "enhancedBoundary": true
-    },
-    {
-      "description": "Capitalize cali",
-      "find": "\\bcali\\b",
-      "replace": "Cali",
-      "flags": "ge",
-      "enabled": true,
-      "enhancedBoundary": true
-    }
+            {
+          "description": "Curly apostrophes -> straight apostrophes",
+          "find": "[\\u2018\\u2019\\u2032]",
+          "replace": "'",
+          "flags": "g",
+          "enabled": true,
+          "enhancedBoundary": false
+        },
+        {
+          "description": "ur -> your",
+          "find": "\\bur\\b",
+          "replace": "your",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "Capitalize cali",
+          "find": "\\bcali\\b",
+          "replace": "Cali",
+          "flags": "ge",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "fix double",
+          "find": "''",
+          "replace": "'",
+          "flags": "gi",
+          "enabled": true,
+          "enhancedBoundary": false
+        },
+        {
+          "description": "ya -> your",
+          "find": "ya",
+          "replace": "your",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "y'know -> you know",
+          "find": "y'know",
+          "replace": "you know",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "wassup -> what's up",
+          "find": "wassup",
+          "replace": "what's up",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "d'fuck -> the fuck",
+          "find": "d'fuck",
+          "replace": "the fuck",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "'cuz -> cause",
+          "find": "'cuz",
+          "replace": "'cause",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "tooly -> toolie",
+          "find": "tooly",
+          "replace": "toolie",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true
+        },
+        {
+          "description": "em comma to em",
+          "find": "—,",
+          "replace": "—",
+          "flags": "g",
+          "enabled": true,
+          "enhancedBoundary": false
+        },
+        {
+          "description": "double single quote -> one",
+          "find": "''",
+          "replace": "'",
+          "flags": "g",
+          "enabled": true,
+          "enhancedBoundary": false
+        }
   ]
 } 
