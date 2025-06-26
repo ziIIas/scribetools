@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      4.11
+// @version      4.12
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -7276,22 +7276,55 @@
             smallButtonsContainer.appendChild(zwsButton);
             smallButtonsContainer.appendChild(findReplaceContainer);
             
-            // Look for the "How to Format Lyrics" section to insert before it
-            const formatExplainer = controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
-                                   controlsContainer.querySelector('[class*="Explainer"]') ||
-                                   controlsContainer.querySelector('*:last-child');
-            
-            if (formatExplainer && formatExplainer.textContent && formatExplainer.textContent.includes('Format')) {
-                // Insert before the explainer (above "How to Format Lyrics:")
-                controlsContainer.insertBefore(mainButtonContainer, formatExplainer);
-                controlsContainer.insertBefore(smallButtonsContainer, formatExplainer);
-                console.log('Inserted buttons before format explainer');
-            } else {
-                // Fallback: append to the container
-                controlsContainer.appendChild(mainButtonContainer);
-                controlsContainer.appendChild(smallButtonsContainer);
-                console.log('Appended buttons to controls container');
-            }
+            // Wait for other extension to potentially create its buttons
+            setTimeout(() => {
+                // Check for other extension's lyrics sections buttons container
+                const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
+                
+                // Look for the LyricsEditExplainer container (don't remove it, let other extensions use it)
+                const lyricsExplainer = controlsContainer.querySelector('[class*="LyricsEditExplainer__Container"]') ||
+                                       controlsContainer.querySelector('[class*="LyricsEditExplainer"]') ||
+                                       document.querySelector('div[class^="LyricsEditExplainer__Container-"]');
+                
+                // Look for the "How to Format Lyrics" section as a fallback
+                const formatExplainer = controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
+                                       controlsContainer.querySelector('[class*="Explainer"]') ||
+                                       controlsContainer.querySelector('*:last-child');
+                
+                if (lyricsSectionsContainer) {
+                    // If other extension's buttons exist, insert our buttons after them
+                    console.log('Found other extension lyrics sections container, positioning our buttons below it');
+                    
+                    // Create a wrapper for our buttons with proper styling
+                    const scribeToolsWrapper = document.createElement('div');
+                    scribeToolsWrapper.id = 'scribe-tools-wrapper';
+                    scribeToolsWrapper.style.marginTop = '1rem';
+                    scribeToolsWrapper.appendChild(mainButtonContainer);
+                    scribeToolsWrapper.appendChild(smallButtonsContainer);
+                    
+                    // Insert after the other extension's container
+                    lyricsSectionsContainer.parentNode.insertBefore(scribeToolsWrapper, lyricsSectionsContainer.nextSibling);
+                    console.log('Inserted ScribeTools buttons after other extension buttons');
+                    
+                } else if (lyricsExplainer) {
+                    // Insert before the LyricsEditExplainer
+                    controlsContainer.insertBefore(mainButtonContainer, lyricsExplainer);
+                    controlsContainer.insertBefore(smallButtonsContainer, lyricsExplainer);
+                    console.log('Inserted buttons before LyricsEditExplainer');
+                    
+                } else if (formatExplainer && formatExplainer.textContent && formatExplainer.textContent.includes('Format')) {
+                    // Insert before the format explainer (above "How to Format Lyrics:")
+                    controlsContainer.insertBefore(mainButtonContainer, formatExplainer);
+                    controlsContainer.insertBefore(smallButtonsContainer, formatExplainer);
+                    console.log('Inserted buttons before format explainer');
+                    
+                } else {
+                    // Fallback: append to the container
+                    controlsContainer.appendChild(mainButtonContainer);
+                    controlsContainer.appendChild(smallButtonsContainer);
+                    console.log('Appended buttons to controls container');
+                }
+            }, 500); // Give other extension time to create its buttons
             
             updateButtonState();
             console.log('Genius Em Dash Toggle and Auto Fix buttons added to editor');
@@ -7302,27 +7335,33 @@
         return false;
     }
 
-    // Function to remove the "How to Format Lyrics" div and LyricsEditExplainer divs
+    // Function to remove only specific format explainer content while preserving structure for other extensions
     function removeFormatExplainerDiv() {
-        // Look for the div containing "How to Format Lyrics" text
+        // Only remove the "How to Format Lyrics" text content, but preserve the container structure
+        // that other extensions might need
         const explainerDivs = document.querySelectorAll('div');
         explainerDivs.forEach(div => {
             if (div.textContent && div.textContent.includes('How to Format Lyrics:')) {
                 // Check if it matches the specific structure with flex styling
                 const style = div.getAttribute('style') || '';
                 if (style.includes('display: flex') && style.includes('flex-direction: row')) {
-                    console.log('Removing "How to Format Lyrics" explainer div');
-                    div.remove();
+                    // Instead of removing the entire div, just hide it or make it smaller
+                    console.log('Hiding "How to Format Lyrics" explainer content (preserving container)');
+                    div.style.display = 'none';
+                    // Or alternatively: div.style.fontSize = '0'; div.style.height = '0';
                 }
             }
         });
         
-        // Also remove LyricsEditExplainer divs (with dynamic class names)
+        // Do NOT remove LyricsEditExplainer divs as other extensions need them
+        // Comment out this section to preserve compatibility
+        /*
         const lyricsExplainerDivs = document.querySelectorAll('div[class*="LyricsEditExplainer"]');
         lyricsExplainerDivs.forEach(div => {
             console.log('Removing LyricsEditExplainer div:', div.className);
             div.remove();
         });
+        */
     }
 
     // Function to initialize the userscript
@@ -7481,11 +7520,13 @@
         
         isInitialized = true;
 
-        // Try to add button to editor if it exists
-        const buttonAdded = addButtonToEditor();
+        // Wait for other extensions to initialize first, then try to add button to editor
+        setTimeout(() => {
+            const buttonAdded = addButtonToEditor();
+        }, 1000); // Give other extensions time to load
         
-        // If that failed, try multiple fallback searches (but only on lyrics pages)
-        if (!buttonAdded && isOnLyricsPage()) {
+        // If that failed, try multiple fallback searches (but only on lyrics pages and don't interfere with other extensions)
+        if (false && !buttonAdded && isOnLyricsPage()) { // Temporarily disabled to prevent interference
             setTimeout(() => {
                 console.log('Retrying button placement with broader search...');
                 
@@ -7597,7 +7638,7 @@
                             if (textEditor) {
                                 removeNumberHighlight(textEditor);
                             }
-                        }, 50); // Reduced delay just for button placement
+                        }, 1200); // Longer delay to wait for other extensions
                     }
                 }
             });
