@@ -1,0 +1,13 @@
+{
+  "name": "scribetools",
+  "version": "4.13.0",
+  "description": "Build pipeline for the Genius ScribeTools userscript",
+  "private": true,
+  "scripts": {
+    "build": "grunt"
+  },
+  "devDependencies": {
+    "grunt": "^1.6.1",
+    "grunt-contrib-concat": "^2.1.0"
+  }
+}

@@ -59,6 +59,8 @@
     // UI UTILITY FUNCTIONS
     // ===========================================
     
+
+
     const UI = {
         // CSS Constants
         COLORS: {
@@ -426,7 +428,7 @@
         }
     };
 
-    // Helper function to get current Genius button class names dynamically
+
     function getGeniusButtonClasses() {
         // Try to find an existing Genius button and extract its classes
         const existingButton = document.querySelector('[class*="LyricsEdit-desktop__Button-sc-"]');
@@ -724,21 +726,8 @@
 
     // Function to toggle dash settings popup
     function toggleDashSettingsPopup() {
-        let popup = document.getElementById('genius-dash-settings-popup');
-        let backdrop = document.getElementById('genius-dash-settings-backdrop');
-        
-        if (!popup) {
-            const result = createDashSettingsPopup();
-            popup = result.popup;
-            backdrop = result.backdrop;
-        }
-        
-        const isVisible = popup.style.display !== 'none';
-        popup.style.display = isVisible ? 'none' : 'block';
-        backdrop.style.display = isVisible ? 'none' : 'flex';
-    }
 
-    // Function to create tabbed interface
+
     function createTabbedInterface() {
         const container = document.createElement('div');
         container.style.cssText = `
@@ -1300,17 +1289,8 @@
 
 
     // Function to create small buttons
-    function createSmallButton(text, clickHandler) {
-        return UI.createButton(text, clickHandler, {
-            styles: {
-                fontSize: '11px',
-                padding: '5px 10px',
-                whiteSpace: 'nowrap'
-            }
-        });
-    }
 
-    // Function to refresh the custom regex rules display with groups
+
     function refreshCustomRegexRulesWithGroups(container) {
         container.innerHTML = '';
         
@@ -3157,7 +3137,8 @@
         document.body.appendChild(backdrop);
     }
 
-    // Function to toggle settings popup
+
+
     function toggleSettingsPopup() {
         if (!settingsPopup) {
             const popupElements = createSettingsPopup();
@@ -3358,34 +3339,8 @@
 
     // Import settings from JSON file
     function importSettings(fileInput) {
-        const file = fileInput.files[0];
-        if (!file) return;
-        
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            try {
-                const jsonContent = e.target.result;
-                // Validate it's valid JSON
-                const parsed = JSON.parse(jsonContent);
-                
-                // Save to localStorage
-                localStorage.setItem('genius-autofix-settings', jsonContent);
-                localStorage.setItem('genius-autofix-settings-backup', jsonContent);
-                
-                console.log('Settings imported successfully');
-                alert('Settings imported successfully! Reloading page...');
-                
-                // Reload to apply new settings
-                location.reload();
-            } catch (err) {
-                console.error('Failed to import settings:', err);
-                alert('Failed to import settings. Invalid file format: ' + err.message);
-            }
-        };
-        reader.readAsText(file);
-    }
 
-    // Auto-save functions
+
     function getAutoSaveKey() {
         // Use the current page URL as the key, but normalize it
         const url = window.location.href;
@@ -3752,6 +3707,7 @@
         }
         isEditing = false;
     }
+
 
     // Common button styling constants
     const BUTTON_STYLES = {
@@ -4374,6 +4330,8 @@
     }
 
     // Function to convert numbers to text according to Genius guidelines
+
+
     function convertNumbersToText(text) {
         // Whitelisted numbers that should never be converted
         const whitelist = ['1600', '3500', '1629', '808', '360', '999', '1337', '420', '187'];
@@ -5911,55 +5869,8 @@
     }
     
     function positionPopupBelowFormatSection(popup) {
-        const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
-                                 document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
-                                 document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
-                                 document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
-                                 document.querySelector('.ihioQH');
-
-        // Look for the find/replace container first
-        const findReplaceContainer = document.getElementById('genius-find-replace-container');
-        
-        // Fallback to format explainer if find/replace container not found
-        const formatExplainer = controlsContainer && (controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
-                                   controlsContainer.querySelector('[class*="Explainer"]') ||
-                                   controlsContainer.querySelector('*:last-child'));
-
-        const updatePosition = () => {
-            // First try to position below find/replace container
-            if (findReplaceContainer) {
-                const findReplaceRect = findReplaceContainer.getBoundingClientRect();
-                const controlsRect = controlsContainer ? controlsContainer.getBoundingClientRect() : findReplaceRect;
-                popup.style.position = 'fixed';
-                popup.style.left = controlsRect.left + 'px';
-                popup.style.top = (findReplaceRect.bottom + 10) + 'px';
-                popup.style.maxWidth = (controlsRect.width - 20) + 'px';
-            }
-            // Fallback to original behavior
-            else if (controlsContainer && formatExplainer) {
-                const explainerRect = formatExplainer.getBoundingClientRect();
-                const containerRect = controlsContainer.getBoundingClientRect();
-                popup.style.position = 'fixed';
-                popup.style.left = containerRect.left + 'px';
-                popup.style.top = (explainerRect.bottom + 10) + 'px';
-                popup.style.maxWidth = (containerRect.width - 20) + 'px';
-            } 
-            // Final fallback
-            else {
-                popup.style.position = 'fixed';
-                popup.style.left = '20px';
-                popup.style.top = (window.innerHeight - 200) + 'px';
-                popup.style.maxWidth = '300px';
-            }
-        };
-
-        return updatePosition;
-    }
-
-    
 
 
-    // Function to perform auto fix on lyrics text
     function performAutoFix() {
         // Find the active text editor
         const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
@@ -6833,6 +6744,8 @@
 
 
     // Function to update button appearance based on state
+
+
     function updateButtonState() {
         if (!toggleButton) return;
 
@@ -7287,139 +7200,8 @@
 
     // Function to handle text selection
     function handleTextSelection() {
-        console.log('Text selection event triggered');
-        
-        // Only show format popup on lyrics pages
-        if (!isOnLyricsPage()) {
-            console.log('Not on a lyrics page, skipping text formatting');
-            return;
-        }
-        
-        // Clear any pending hide timeout
-        if (popupTimeout) {
-            clearTimeout(popupTimeout);
-            popupTimeout = null;
-        }
-        
-        const selection = window.getSelection();
-        const selectedText = selection.toString().trim();
-        
-        console.log('Selected text:', selectedText);
-        console.log('Selection range count:', selection.rangeCount);
-        
-        // Check if we have selected text, even if ranges are cleared
-        if (selectedText && selectedText.length > 0) {
-            const activeElement = document.activeElement;
-            console.log('Active element:', activeElement);
-            console.log('Active element tag:', activeElement.tagName);
-            console.log('Active element classes:', activeElement.className);
-            
-            const isInEditor = activeElement.closest('[class*="LyricsEdit"]') || 
-                              activeElement.closest('[class*="lyrics-edit"]') ||
-                              activeElement.matches('textarea') ||
-                              activeElement.matches('[contenteditable="true"]') ||
-                              activeElement.isContentEditable;
 
-            console.log('Is in editor:', isInEditor);
 
-            if (isInEditor) {
-                // Store the selection with position information to handle duplicates
-                let selectionStart = null;
-                let selectionEnd = null;
-                let selectionRange = null;
-                
-                if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
-                    selectionStart = activeElement.selectionStart;
-                    selectionEnd = activeElement.selectionEnd;
-                } else if (activeElement.isContentEditable && selection.rangeCount > 0) {
-                    // Store the actual range for contenteditable elements
-                    selectionRange = selection.getRangeAt(0).cloneRange();
-                }
-                
-                currentSelection = {
-                    text: selectedText,
-                    activeElement: activeElement,
-                    selectionStart: selectionStart,
-                    selectionEnd: selectionEnd,
-                    selectionRange: selectionRange
-                };
-                
-                // Better positioning for textarea elements
-                let x, y;
-                const elementRect = activeElement.getBoundingClientRect();
-                
-                if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
-                    // For textarea, try to estimate position based on cursor
-                    const cursorPosition = activeElement.selectionStart;
-                    const text = activeElement.value.substring(0, cursorPosition);
-                    const lines = text.split('\n');
-                    const currentLine = lines.length - 1;
-                    const currentColumn = lines[lines.length - 1].length;
-                    
-                    // Get computed styles for more accurate measurements
-                    const styles = window.getComputedStyle(activeElement);
-                    const lineHeight = parseInt(styles.lineHeight) || 20;
-                    const fontSize = parseInt(styles.fontSize) || 14;
-                    const charWidth = fontSize * 0.6; // approximate character width
-                    
-                    // Account for padding and scroll
-                    const paddingLeft = parseInt(styles.paddingLeft) || 0;
-                    const paddingTop = parseInt(styles.paddingTop) || 0;
-                    
-                    x = elementRect.left + paddingLeft + (currentColumn * charWidth);
-                    y = elementRect.top + window.scrollY + paddingTop + (currentLine * lineHeight) + lineHeight + 10;
-                    
-                    // Bounds checking
-                    x = Math.min(x, elementRect.right - 120); // Don't go past right edge
-                    x = Math.max(x, elementRect.left + 10); // Don't go past left edge
-                    
-                    console.log('Using textarea positioning with cursor estimation');
-                    console.log('Cursor position:', cursorPosition, 'Line:', currentLine, 'Column:', currentColumn);
-                    console.log('LineHeight:', lineHeight, 'CharWidth:', charWidth, 'Padding:', paddingLeft, paddingTop);
-                } else if (selection.rangeCount > 0) {
-                    const range = selection.getRangeAt(0);
-                    const rect = range.getBoundingClientRect();
-                    console.log('Selection rect:', rect);
-                    
-                    // Check if rect is valid (not all zeros)
-                    if (rect.width > 0 && rect.height > 0) {
-                        x = rect.left + (rect.width / 2) - 50;
-                        y = rect.top + window.scrollY - 60;
-                        console.log('Using selection rect positioning');
-                    } else {
-                        // Fallback to element positioning
-                        x = elementRect.left + 20;
-                        y = elementRect.top + window.scrollY - 60;
-                        console.log('Selection rect invalid, using element positioning');
-                    }
-                } else {
-                    // Fallback: position near the active element
-                    x = elementRect.left + 20;
-                    y = elementRect.top + window.scrollY - 60;
-                    console.log('Using fallback element positioning');
-                }
-                
-                // Ensure popup is not positioned off-screen
-                x = Math.max(10, x);
-                y = Math.max(10, y);
-                
-                console.log('Popup position:', x, y);
-                
-                showFormatPopup(x, y);
-                return;
-            } else {
-                console.log('Not in editor - hiding popup');
-            }
-        } else {
-            console.log('No selected text - scheduling popup hide');
-            // Don't hide immediately, schedule it with a delay
-            popupTimeout = setTimeout(() => {
-                hideFormatPopup();
-            }, 200);
-        }
-    }
-
-    // Function to check if we're on a lyrics page
     function isOnLyricsPage() {
         return window.location.pathname.endsWith('-lyrics') || window.location.pathname.endsWith('-annotated');
     }
