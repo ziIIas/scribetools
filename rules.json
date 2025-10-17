@@ -4,7 +4,7 @@
     "title": "zilla's Rules",
     "description": "Misc. rules for text processing and corrections",
     "id": "1",
-    "version": "2"
+    "version": "3"
   },
   "rules": [
     {
@@ -33,8 +33,22 @@
     },
     {
       "description": "Curly double quotes -> straight double quotes",
-      "find": "[\\u201c\\u201d]",
+      "find": "[\\u201c\\u201d«»《》”″‶ʺˮ‟〝〞⟪⟫⪡⪢⪻⪼„]",
       "replace": "\"",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "Curly apostrophes -> straight apostrophes",
+      "find": "[\\u2018\\u2019\\u2032]",
+      "replace": "'",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "Double single quote -> single quote",
+      "find": "''",
+      "replace": "'",
       "flags": "g",
       "enabled": true
     },
@@ -46,101 +60,742 @@
       "enabled": true,
       "enhancedBoundary": true
     },
-            {
-          "description": "Curly apostrophes -> straight apostrophes",
-          "find": "[\\u2018\\u2019\\u2032]",
-          "replace": "'",
-          "flags": "g",
-          "enabled": true,
-          "enhancedBoundary": false
-        },
-        {
-          "description": "ur -> your",
-          "find": "\\bur\\b",
-          "replace": "your",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "Capitalize cali",
-          "find": "\\bcali\\b",
-          "replace": "Cali",
-          "flags": "ge",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "fix double",
-          "find": "''",
-          "replace": "'",
-          "flags": "gi",
-          "enabled": true,
-          "enhancedBoundary": false
-        },
-        {
-          "description": "ya -> your",
-          "find": "ya",
-          "replace": "your",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "y'know -> you know",
-          "find": "y'know",
-          "replace": "you know",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "wassup -> what's up",
-          "find": "wassup",
-          "replace": "what's up",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "d'fuck -> the fuck",
-          "find": "d'fuck",
-          "replace": "the fuck",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "'cuz -> cause",
-          "find": "'cuz",
-          "replace": "'cause",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "tooly -> toolie",
-          "find": "tooly",
-          "replace": "toolie",
-          "flags": "gie",
-          "enabled": true,
-          "enhancedBoundary": true
-        },
-        {
-          "description": "em comma to em",
-          "find": "—,",
-          "replace": "—",
-          "flags": "g",
-          "enabled": true,
-          "enhancedBoundary": false
-        },
-        {
-          "description": "double single quote -> one",
-          "find": "''",
-          "replace": "'",
-          "flags": "g",
-          "enabled": true,
-          "enhancedBoundary": false
-        }
+    {
+      "description": "ur -> your",
+      "find": "\\bur\\b",
+      "replace": "your",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "ya -> your",
+      "find": "\\bya\\b",
+      "replace": "your",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "y'know -> you know",
+      "find": "y'know",
+      "replace": "you know",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "wassup -> what's up",
+      "find": "wassup",
+      "replace": "what's up",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "d'fuck -> the fuck",
+      "find": "d'fuck",
+      "replace": "the fuck",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "'cuz -> 'cause",
+      "find": "'cuz",
+      "replace": "'cause",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "cuz -> 'cause",
+      "find": "\\bcuz\\b",
+      "replace": "'cause",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "tooly -> toolie",
+      "find": "tooly",
+      "replace": "toolie",
+      "flags": "gie",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Capitalize cali",
+      "find": "\\bcali\\b",
+      "replace": "Cali",
+      "flags": "ge",
+      "enabled": true,
+      "enhancedBoundary": true
+    },
+    {
+      "description": "Em dash before comma -> em dash",
+      "find": "—,",
+      "replace": "—",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "yall variations -> y'all",
+      "find": "\\b(ya'll|yall)\\b",
+      "replace": "y'all",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "ima/imma variations -> I'ma",
+      "find": "\\b(ima|imma|i'mma|im'ma)\\b",
+      "replace": "I'ma",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "alot -> a lot",
+      "find": "\\balot\\b",
+      "replace": "a lot",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "trynna -> tryna",
+      "find": "\\btrynna\\b",
+      "replace": "tryna",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "AM formatting",
+      "find": "\\b(AM\\b|A\\.M\\.)",
+      "replace": "a.m.",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "PM formatting",
+      "find": "\\b(PM\\b|P\\.M\\.)",
+      "replace": "p.m.",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "boujee/boujie -> bougie",
+      "find": "\\b(boujee|boujie)\\b",
+      "replace": "bougie",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "sux -> sucks",
+      "find": "\\bsux\\b",
+      "replace": "sucks",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "tec -> TEC",
+      "find": "\\btec\\b",
+      "replace": "TEC",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "tv -> TV",
+      "find": "\\btv\\b",
+      "replace": "TV",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "foe 'nem variations -> foenem",
+      "find": "\\bfoe[' ]?nem\\b",
+      "replace": "foenem",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "bro 'nem variations -> bronem",
+      "find": "\\bbro[' ]?nem\\b",
+      "replace": "bronem",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "switchey/switchie -> switchy",
+      "find": "\\b(switchey|switchie)\\b",
+      "replace": "switchy",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "switchys -> switchies",
+      "find": "\\bswitchys\\b",
+      "replace": "switchies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "blickey/blickie -> blicky",
+      "find": "\\b(blickey|blickie)\\b",
+      "replace": "blicky",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "blickys -> blickies",
+      "find": "\\bblickys\\b",
+      "replace": "blickies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "cous' -> cuz",
+      "find": "\\bcous'\\b",
+      "replace": "cuz",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "T'ed/Teed -> T'd",
+      "find": "\\b(t'ed|teed)\\b",
+      "replace": "T'd",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "slimey -> slimy",
+      "find": "\\bslimey\\b",
+      "replace": "slimy",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "high speed -> high-speed",
+      "find": "\\bhigh speed\\b",
+      "replace": "high-speed",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "e-way/eway -> E-way",
+      "find": "\\b(e-way|eway)\\b",
+      "replace": "E-way",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "10 K/ten K -> 10K",
+      "find": "\\b(10\\s*K|ten\\s*K)\\b",
+      "replace": "10K",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Drake -> Drac' (ask)",
+      "find": "\\bdrake\\b",
+      "replace": "Drac'",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "Dracey -> Dracy",
+      "find": "\\bdracey\\b",
+      "replace": "Dracy",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "micro Draco -> Micro Draco",
+      "find": "\\bmicro draco\\b",
+      "replace": "Micro Draco",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "mini Draco -> Mini Draco",
+      "find": "\\bmini draco\\b",
+      "replace": "Mini Draco",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "choppa -> chopper",
+      "find": "\\bchoppa\\b",
+      "replace": "chopper",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "TEC9 variants -> TEC-9",
+      "find": "\\b(tec9|tec-9|TEC9|TEC-9)\\b",
+      "replace": "TEC-9",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Mac -> MAC (ask)",
+      "find": "\\bmac\\b",
+      "replace": "MAC",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "MAC10/Mac10/mac10 -> MAC-10",
+      "find": "\\b(mac10|mac-10|MAC10|MAC-10)\\b",
+      "replace": "MAC-10",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "MAC11/Mac11/mac11 -> MAC-11",
+      "find": "\\b(mac11|mac-11|MAC11|MAC-11)\\b",
+      "replace": "MAC-11",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Glockys -> Glockies",
+      "find": "\\bglockys\\b",
+      "replace": "Glockies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "G-Lock -> G-lock",
+      "find": "G-Lock",
+      "replace": "G-lock",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "glizzys -> glizzies",
+      "find": "\\bglizzys\\b",
+      "replace": "glizzies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "gen 1/gen'1 -> Gen1",
+      "find": "\\bgen[' ]?1\\b",
+      "replace": "Gen1",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "F and N -> F&N",
+      "find": "\\bF and N\\b",
+      "replace": "F&N",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "KelTec/Kel-Tech -> Kel-Tec",
+      "find": "\\b(keltec|kel-tec)\\b",
+      "replace": "Kel-Tec",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Sig -> SIG",
+      "find": "\\bsig\\b",
+      "replace": "SIG",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Rooger -> Ruger",
+      "find": "\\brooger\\b",
+      "replace": "Ruger",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Smith and Wesson -> Smith & Wesson",
+      "find": "Smith and Wesson",
+      "replace": "Smith & Wesson",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "M and P -> M&P",
+      "find": "M and P",
+      "replace": "M&P",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "five-seven -> 5.7",
+      "find": "\\bfive-seven\\b",
+      "replace": "5.7",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "thirty-eight -> .38 (ask)",
+      "find": "\\bthirty-eight\\b",
+      "replace": ".38",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "mag' -> mag",
+      "find": "\\bmag'\\b",
+      "replace": "mag",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "30-round -> thirty-round",
+      "find": "\\b30-round\\b",
+      "replace": "thirty-round",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "50-round -> fifty-round",
+      "find": "\\b50-round\\b",
+      "replace": "fifty-round",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "100-round -> hundred-round",
+      "find": "\\b100-round\\b",
+      "replace": "hundred-round",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Plain Jane variations -> plain jane",
+      "find": "\\b(plain jane|Plain Jane)\\b",
+      "replace": "plain jane",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "prezi/Presi' -> presi",
+      "find": "\\b(prezi|Presi')\\b",
+      "replace": "presi",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "bustdown/bussdown -> bust down",
+      "find": "\\b(bustdown|bussdown)\\b",
+      "replace": "bust down",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Richy -> Richie",
+      "find": "\\brichy\\b",
+      "replace": "Richie",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Carty -> Carti'",
+      "find": "\\bcarty\\b",
+      "replace": "Carti'",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Rolley -> Rollie",
+      "find": "\\brolley\\b",
+      "replace": "Rollie",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Audemar -> Audemars",
+      "find": "\\baudemar\\b",
+      "replace": "Audemars",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "cuban -> Cuban",
+      "find": "\\bcuban\\b",
+      "replace": "Cuban",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "jay/J' -> J",
+      "find": "\\b(jay|J')\\b",
+      "replace": "J",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Baguette -> baguette",
+      "find": "\\bBaguette\\b",
+      "replace": "baguette",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "Xannie -> Xanny",
+      "find": "\\bxannie\\b",
+      "replace": "Xanny",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Xannys -> Xannies",
+      "find": "\\bxannys\\b",
+      "replace": "Xannies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Perk -> Perc' (ask)",
+      "find": "\\bperk\\b",
+      "replace": "Perc'",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "yerk -> yerc",
+      "find": "\\byerk\\b",
+      "replace": "yerc",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Perkys -> Perkies",
+      "find": "\\bperkys\\b",
+      "replace": "Perkies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Roxys -> Roxies",
+      "find": "\\broxys\\b",
+      "replace": "Roxies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Oxys -> Oxies",
+      "find": "\\boxys\\b",
+      "replace": "Oxies",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Addies -> Addys",
+      "find": "\\baddies\\b",
+      "replace": "Addys",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Wockhart -> Wockhardt",
+      "find": "\\bwockhart\\b",
+      "replace": "Wockhardt",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Wockie -> Wocky",
+      "find": "\\bwockie\\b",
+      "replace": "Wocky",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Hi-Tec/High tech -> Hi-Tech",
+      "find": "\\b(hi-tec|high tech)\\b",
+      "replace": "Hi-Tech",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Molly -> molly (ask)",
+      "find": "\\bmolly\\b",
+      "replace": "molly",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "fetti -> fetty",
+      "find": "\\bfetti\\b",
+      "replace": "fetty",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "extasy -> ecstasy",
+      "find": "\\bextasy\\b",
+      "replace": "ecstasy",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "SRT8/skrate -> straight-eight",
+      "find": "\\b(SRT8|skrate)\\b",
+      "replace": "straight-eight",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "RedEye/Red-eye -> Redeye",
+      "find": "\\b(RedEye|Red-eye)\\b",
+      "replace": "Redeye",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "Beamer -> Bimmer",
+      "find": "\\bbeamer\\b",
+      "replace": "Bimmer",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Lamboh -> Lambo'",
+      "find": "\\blamboh\\b",
+      "replace": "Lambo'",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "rango -> 'Rango",
+      "find": "\\brango\\b",
+      "replace": "'Rango",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "KIA -> Kia",
+      "find": "\\bKIA\\b",
+      "replace": "Kia",
+      "flags": "g",
+      "enabled": true
+    },
+    {
+      "description": "Vete/Vett -> 'Vette",
+      "find": "\\b(vete|vett)\\b",
+      "replace": "'Vette",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Mayback -> Maybach",
+      "find": "\\bmayback\\b",
+      "replace": "Maybach",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Scat'/Skat -> Scat",
+      "find": "\\b(scat'|skat)\\b",
+      "replace": "Scat",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "TrackHawk -> Trackhawk",
+      "find": "\\btrackhawk\\b",
+      "replace": "Trackhawk",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "fin fin -> fin-fin",
+      "find": "\\bfin fin\\b",
+      "replace": "fin-fin",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Mazi/Masi' -> Masi",
+      "find": "\\b(mazi|masi')\\b",
+      "replace": "Masi",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "stoleo/stoley -> stolie",
+      "find": "\\b(stoleo|stoley)\\b",
+      "replace": "stolie",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "skrt -> skrrt",
+      "find": "\\bskrt\\b",
+      "replace": "skrrt",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "grah -> grrah",
+      "find": "\\bgrah\\b",
+      "replace": "grrah",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "brah -> brrah (ask)",
+      "find": "\\bbrah\\b",
+      "replace": "brrah",
+      "flags": "gi",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "slat -> slatt",
+      "find": "\\bslat\\b",
+      "replace": "slatt",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "mmm -> mm",
+      "find": "\\bmmm\\b",
+      "replace": "mm",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "naa/nawh -> naw",
+      "find": "\\b(naa|nawh)\\b",
+      "replace": "naw",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "n't contractions",
+      "find": "\\b(ai|are|ca|could|did|do|does|had|have|is|must|should|was|were|wo|would)nt\\b",
+      "replace": "$1n't",
+      "flags": "gi",
+      "enabled": true
+    },
+    {
+      "description": "Beginning of line capitalization",
+      "find": "((?:^|[\"(])(?:<[bi]>|['\"])*)\\s*([a-z])",
+      "replace": "function(match, prefix, letter) { return prefix + letter.toUpperCase(); }",
+      "flags": "gm",
+      "enabled": true,
+      "ask": true
+    },
+    {
+      "description": "Proper noun capitalization",
+      "find": "\\b(january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|nike|adidas|apple|google|amazon|facebook|instagram|twitter)\\b",
+      "replace": "function(match) { return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase(); }",
+      "flags": "gi",
+      "enabled": true
+    }
   ]
-} 
+}
