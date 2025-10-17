@@ -24,11 +24,14 @@
     let currentSelection = null;
     let popupTimeout = null;
 
-    // Auto-save variables
+    // Auto-save variables (tracked per editor context: lyrics, annotations, bios)
     let autoSaveInterval = null;
-    let lastSavedContent = '';
+    const lastSavedContent = new Map();
+    const activeEditors = new Map();
+    const restorePromptShownForContext = new Set();
+    const autoSaveInputTimeouts = new Map();
+    let lastFocusedContextKey = null;
     let isEditing = false;
-    let hasShownRestorePrompt = false; // Only show restore prompt once per page load
 
     // Auto fix settings - default all enabled
     let autoFixSettings = {
@@ -50,7 +53,8 @@
         dashTrigger: '3', // Options: 'off' for disabled, '2' for --, '3' for --- (moved from emDashMode for dash button settings)
         // New rule groups structure
         ruleGroups: [], // Array of {id: string, title: string, description: string, author: string, version: string, rules: array}
-        ungroupedRules: [] // Rules not assigned to any group
+        ungroupedRules: [], // Rules not assigned to any group
+        persistentAutoSave: false
     };
 
 
@@ -857,9 +861,10 @@
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
             { key: 'multipleSpaces', label: 'Fix spacing (multiple spaces → single, remove trailing)', type: 'checkbox' },
             { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
+            { key: 'persistentAutoSave', label: 'Keep auto-saved drafts after Save / Save & Exit', type: 'checkbox' },
             { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja-)', type: 'checkbox' },
 
-            { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown', 
+            { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown',
               options: [
                   { value: 'off', label: 'Off' },
                   { value: 'ask', label: 'Ask for each number' },
@@ -3386,63 +3391,209 @@
     }
 
     // Auto-save functions
-    function getAutoSaveKey() {
+    function getAutoSaveKey(contextKey = 'lyrics') {
         // Use the current page URL as the key, but normalize it
         const url = window.location.href;
         const baseUrl = url.split('?')[0].split('#')[0]; // Remove query params and hash
-        return `genius-autosave-${baseUrl}`;
+        const safeContext = contextKey.replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+        return `genius-autosave-${baseUrl}-${safeContext}`;
     }
 
-    function saveCurrentContent() {
-        if (!isEditing) return;
+    function isTextEntryElement(element) {
+        if (!element) return false;
+        if (element.tagName === 'TEXTAREA') return true;
+        if (element.isContentEditable) return true;
+        if (element.tagName === 'INPUT') {
+            const type = (element.getAttribute('type') || 'text').toLowerCase();
+            return ['text', 'search'].includes(type);
+        }
+        return false;
+    }
 
-        const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
-                          document.querySelector('textarea') ||
-                          document.querySelector('[contenteditable="true"]');
+    function extractEditorContent(editor) {
+        if (!editor) {
+            return { content: '', selectionStart: null, selectionEnd: null };
+        }
 
-        if (!textEditor) return;
-
-        let content;
+        let content = '';
         let selectionStart = null;
         let selectionEnd = null;
 
-        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-            content = textEditor.value;
-            selectionStart = textEditor.selectionStart;
-            selectionEnd = textEditor.selectionEnd;
-        } else if (textEditor.isContentEditable) {
-            content = textEditor.innerText || textEditor.textContent;
+        if (editor.tagName === 'TEXTAREA' || editor.tagName === 'INPUT') {
+            content = editor.value;
+            selectionStart = editor.selectionStart;
+            selectionEnd = editor.selectionEnd;
+        } else if (editor.isContentEditable) {
+            content = editor.innerText || editor.textContent || '';
         }
 
-        if (!content || content === lastSavedContent) return;
+        return { content, selectionStart, selectionEnd };
+    }
 
-        const saveData = {
-            content: content,
-            timestamp: Date.now(),
-            url: window.location.href,
-            selectionStart: selectionStart,
-            selectionEnd: selectionEnd
+    function detectEditorContext(element) {
+        if (!element || !element.closest) return null;
+
+        const stringCandidates = [
+            element.className || '',
+            element.getAttribute && element.getAttribute('aria-label') || '',
+            element.getAttribute && element.getAttribute('placeholder') || '',
+            element.getAttribute && element.getAttribute('name') || '',
+            element.getAttribute && element.getAttribute('data-testid') || ''
+        ].join(' ').toLowerCase();
+
+        const lyricsContainer = element.closest('[class*="LyricsEdit"]');
+        if (lyricsContainer) {
+            return {
+                type: 'lyrics',
+                label: 'lyrics editor',
+                key: 'lyrics'
+            };
+        }
+
+        const annotationContainer = element.closest('[data-annotation-id], [data-id][class*="Annotation"], [class*="AnnotationEditor"], [class*="AnnotationForm"], [class*="Referent"]');
+        const looksLikeAnnotation = stringCandidates.includes('annotation') || stringCandidates.includes('referent');
+        if (annotationContainer || looksLikeAnnotation) {
+            const annotationId = (annotationContainer && (
+                annotationContainer.getAttribute('data-annotation-id') ||
+                annotationContainer.getAttribute('data-id') ||
+                annotationContainer.getAttribute('data-referent-id')
+            )) || element.getAttribute && (element.getAttribute('data-annotation-id') || element.getAttribute('data-referent-id'));
+            const key = annotationId ? `annotation-${annotationId}` : 'annotation';
+            const label = annotationId ? `annotation ${annotationId}` : 'annotation';
+            return {
+                type: 'annotation',
+                label: `${label} editor`,
+                key
+            };
+        }
+
+        const bioContainer = element.closest('[class*="Bio"], [data-testid*="bio"], [class*="About"], [class*="Metadata"]');
+        const looksLikeBio = stringCandidates.includes('bio') || stringCandidates.includes('song bio') || stringCandidates.includes('about artist');
+        if (bioContainer || looksLikeBio) {
+            const sectionId = (bioContainer && (
+                bioContainer.getAttribute('data-testid') ||
+                bioContainer.getAttribute('id')
+            )) || element.getAttribute && element.getAttribute('data-testid');
+            const key = sectionId ? `bio-${sectionId}` : 'bio';
+            const label = sectionId ? sectionId.replace(/[-_]/g, ' ') : 'song bio';
+            return {
+                type: 'bio',
+                label: `${label} editor`.trim(),
+                key
+            };
+        }
+
+        if (stringCandidates.includes('lyrics') || stringCandidates.includes('transcription')) {
+            return {
+                type: 'lyrics',
+                label: 'lyrics editor',
+                key: 'lyrics'
+            };
+        }
+
+        return null;
+    }
+
+    function saveCurrentContent(contextKey = null) {
+        const keysToSave = contextKey ? [contextKey] : Array.from(activeEditors.keys());
+
+        if (!keysToSave.length) {
+            return;
+        }
+
+        keysToSave.forEach((key) => {
+            const editorInfo = activeEditors.get(key);
+            if (!editorInfo) return;
+
+            const { element, context } = editorInfo;
+            if (!element || !document.contains(element)) {
+                activeEditors.delete(key);
+                lastSavedContent.delete(key);
+                return;
+            }
+
+            const { content, selectionStart, selectionEnd } = extractEditorContent(element);
+
+            if (!content || content === lastSavedContent.get(key)) {
+                return;
+            }
+
+            const saveData = {
+                content,
+                timestamp: Date.now(),
+                url: window.location.href,
+                selectionStart,
+                selectionEnd,
+                contextKey: key,
+                contextType: context.type,
+                contextLabel: context.label
+            };
+
+            try {
+                localStorage.setItem(getAutoSaveKey(key), JSON.stringify(saveData));
+                lastSavedContent.set(key, content);
+                isEditing = true;
+            } catch (e) {
+                console.warn('Failed to persist auto-save data:', e);
+            }
+        });
+    }
+
+    function clearAutoSave(contextKey = null) {
+        const keys = contextKey ? [contextKey] : Array.from(new Set([
+            ...activeEditors.keys(),
+            ...Array.from(lastSavedContent.keys())
+        ]));
+
+        keys.forEach((key) => {
+            try {
+                localStorage.removeItem(getAutoSaveKey(key));
+            } catch (e) {
+                console.warn('Failed to clear auto-save data:', e);
+            }
+            lastSavedContent.delete(key);
+
+            const timeout = autoSaveInputTimeouts.get(key);
+            if (timeout) {
+                clearTimeout(timeout);
+                autoSaveInputTimeouts.delete(key);
+            }
+
+            activeEditors.delete(key);
+            restorePromptShownForContext.delete(key);
+
+            if (window.pendingRestoreData && window.pendingRestoreData.contextKey === key) {
+                delete window.pendingRestoreData;
+            }
+
+            if (lastFocusedContextKey === key) {
+                lastFocusedContextKey = null;
+            }
+        });
+
+        if (!contextKey) {
+            autoSaveInputTimeouts.forEach((timeout) => clearTimeout(timeout));
+            autoSaveInputTimeouts.clear();
+        }
+
+        isEditing = activeEditors.size > 0;
+    }
+
+
+
+    function showRestoreNotification(saveData, timeString, options = {}) {
+        const { contextKey = saveData.contextKey || 'lyrics', contextLabel = saveData.contextLabel || 'lyrics editor', editorElement = null } = options;
+        const normalizedContextKey = contextKey;
+        const normalizedLabel = contextLabel;
+
+        window.pendingRestoreData = {
+            saveData,
+            element: editorElement,
+            contextKey: normalizedContextKey
         };
 
-        try {
-            localStorage.setItem(getAutoSaveKey(), JSON.stringify(saveData));
-            lastSavedContent = content;
-        } catch (e) {
-        }
-    }
+        restorePromptShownForContext.add(normalizedContextKey);
 
-    function clearAutoSave() {
-        try {
-            localStorage.removeItem(getAutoSaveKey());
-            lastSavedContent = '';
-        } catch (e) {
-        }
-    }
-
-
-
-         function showRestoreNotification(saveData, timeString) {
         // Create notification overlay
         const overlay = document.createElement('div');
         overlay.style.cssText = `
@@ -3482,7 +3633,7 @@
         `;
 
         const message = document.createElement('p');
-        message.innerHTML = `We found unsaved work from <strong>${timeString}</strong>.<br>Would you like to restore it?`;
+        message.innerHTML = `We found unsaved work in your <strong>${normalizedLabel}</strong> from <strong>${timeString}</strong>.<br>Would you like to restore it?`;
         message.style.cssText = `
             margin: 0 0 24px 0;
             color: #666;
@@ -3573,14 +3724,17 @@
         });
 
         restoreBtn.addEventListener('click', () => {
-            restoreContent(saveData);
+            restoreContent(saveData, editorElement, normalizedContextKey);
             document.body.removeChild(overlay);
         });
 
         discardBtn.addEventListener('click', () => {
-            clearAutoSave();
-            hasShownRestorePrompt = true; // Mark as handled
+            clearAutoSave(normalizedContextKey);
             document.body.removeChild(overlay);
+            isEditing = activeEditors.size > 0;
+            if (window.pendingRestoreData) {
+                delete window.pendingRestoreData;
+            }
         });
 
         buttonContainer.appendChild(restoreBtn);
@@ -3595,22 +3749,68 @@
         document.body.appendChild(overlay);
     }
 
-    function restoreContent(saveData) {
-        // Look for the lyrics editor specifically
-        let textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                        document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+    function restoreContent(saveData, editorElement = null, contextKeyOverride = null) {
+        const targetContextKey = contextKeyOverride || saveData.contextKey || 'lyrics';
+        const contextType = saveData.contextType || (targetContextKey.startsWith('annotation') ? 'annotation' : targetContextKey.startsWith('bio') ? 'bio' : 'lyrics');
 
+        let textEditor = editorElement && document.contains(editorElement) ? editorElement : null;
 
+        if (!textEditor && window.pendingRestoreData && window.pendingRestoreData.contextKey === targetContextKey) {
+            const pendingElement = window.pendingRestoreData.element;
+            if (pendingElement && document.contains(pendingElement)) {
+                textEditor = pendingElement;
+            }
+        }
+
+        if (!textEditor) {
+            const selectorsByType = {
+                lyrics: [
+                    '[class*="LyricsEdit"] textarea',
+                    '[class*="LyricsEdit"] [contenteditable="true"]',
+                    'textarea[name*="lyrics"]'
+                ],
+                annotation: [
+                    '[data-testid*="annotation"] textarea',
+                    '[data-testid*="annotation"] [contenteditable="true"]',
+                    '[class*="Annotation"] textarea',
+                    '[class*="Annotation"] [contenteditable="true"]',
+                    'textarea[name*="annotation"]'
+                ],
+                bio: [
+                    '[data-testid*="bio"] textarea',
+                    '[data-testid*="bio"] [contenteditable="true"]',
+                    '[class*="Bio"] textarea',
+                    '[class*="Bio"] [contenteditable="true"]',
+                    'textarea[name*="bio"]'
+                ]
+            };
+
+            const selectors = selectorsByType[contextType] || selectorsByType.lyrics;
+            for (const selector of selectors) {
+                const candidate = document.querySelector(selector);
+                if (candidate) {
+                    textEditor = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (!textEditor && document.activeElement && isTextEntryElement(document.activeElement)) {
+            const activeContext = detectEditorContext(document.activeElement);
+            if (activeContext && activeContext.key === targetContextKey) {
+                textEditor = document.activeElement;
+            }
+        }
 
         if (textEditor) {
             // Editor found, restore immediately
-            performRestore(textEditor, saveData);
+            performRestore(textEditor, saveData, targetContextKey);
         } else {
-            alert('Could not find the lyrics editor. Please ensure you are in editing mode.');
+            alert('Could not find the appropriate editor. Please ensure you are in editing mode.');
         }
     }
 
-    function performRestore(textEditor, saveData) {
+    function performRestore(textEditor, saveData, contextKey = 'lyrics') {
 
         try {
             if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
@@ -3650,8 +3850,12 @@
                 textEditor.dispatchEvent(new Event('keyup', { bubbles: true }));
             }
 
-            lastSavedContent = saveData.content;
-            hasShownRestorePrompt = true; // Mark as handled
+            lastSavedContent.set(contextKey, saveData.content);
+            restorePromptShownForContext.add(contextKey);
+            const detectedContext = detectEditorContext(textEditor) || { key: contextKey, label: saveData.contextLabel || 'editor', type: saveData.contextType || 'lyrics' };
+            activeEditors.set(contextKey, { element: textEditor, context: detectedContext });
+            lastFocusedContextKey = contextKey;
+            isEditing = true;
             
         } catch (error) {
             console.error('Error during content restoration:', error);
@@ -3674,17 +3878,26 @@
                  // Also save on text input
         document.addEventListener('input', (e) => {
             const target = e.target;
-            // Make sure we're specifically in the lyrics editor, not a comment box
-            const isInLyricsEditor = target.closest('[class*="LyricsEdit"]') && 
-                                   (target.matches('textarea') || target.isContentEditable);
+            if (!isTextEntryElement(target)) return;
 
-            if (isInLyricsEditor) {
-                isEditing = true;
-                
-                // Debounced save - save 2 seconds after last input
-                clearTimeout(window.autoSaveInputTimeout);
-                window.autoSaveInputTimeout = setTimeout(saveCurrentContent, 2000);
+            const context = detectEditorContext(target);
+            if (!context) return;
+
+            activeEditors.set(context.key, { element: target, context });
+            lastFocusedContextKey = context.key;
+            isEditing = true;
+
+            const existingTimeout = autoSaveInputTimeouts.get(context.key);
+            if (existingTimeout) {
+                clearTimeout(existingTimeout);
             }
+
+            const timeout = setTimeout(() => {
+                saveCurrentContent(context.key);
+                autoSaveInputTimeouts.delete(context.key);
+            }, 2000);
+
+            autoSaveInputTimeouts.set(context.key, timeout);
         });
 
                  // Listen for save/publish/cancel button clicks to clear auto-save
@@ -3697,31 +3910,48 @@
                 // Clean up highlights when entering edit mode
                 if (buttonText.includes('edit') && buttonText.includes('lyrics')) {
                     // Immediate global cleanup
-                    removeNumberHighlight(null);
+                    removeInteractiveHighlight(null);
                     
                     // Quick follow-up for any editor-specific cleanup
                     setTimeout(() => {
                         const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
                                           document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                         if (textEditor) {
-                            removeNumberHighlight(textEditor);
+                            removeInteractiveHighlight(textEditor);
                         }
                     }, 10); // Minimal delay
                 }
                 
                 // Clear auto-save when user successfully saves/publishes or cancels
-                if (buttonText.includes('save') || buttonText.includes('publish') || 
+                if (buttonText.includes('save') || buttonText.includes('publish') ||
                     buttonText.includes('submit') || buttonText.includes('update')) {
-                    setTimeout(() => {
-                        // Clear auto-save after a short delay to ensure save was successful
-                        clearAutoSave();
+                    if (!autoFixSettings.persistentAutoSave) {
+                        setTimeout(() => {
+                            const activeElement = document.activeElement;
+                            const context = detectEditorContext(activeElement) ||
+                                (lastFocusedContextKey ? { key: lastFocusedContextKey } : null);
+                            if (context && context.key) {
+                                clearAutoSave(context.key);
+                            } else {
+                                clearAutoSave();
+                            }
+                            isEditing = activeEditors.size > 0;
+                        }, 2000);
+                    } else {
                         isEditing = false;
-                    }, 2000);
+                    }
                 }
                 // Clear auto-save immediately when Cancel button is clicked
                 else if (buttonText.includes('cancel') || buttonClasses.includes('iUzusl')) {
-                    clearAutoSave();
-                    isEditing = false;
+                    const activeElement = document.activeElement;
+                    const context = detectEditorContext(activeElement) ||
+                        (lastFocusedContextKey ? { key: lastFocusedContextKey } : null);
+                    if (context && context.key) {
+                        clearAutoSave(context.key);
+                    } else {
+                        clearAutoSave();
+                    }
+                    isEditing = activeEditors.size > 0;
                 }
                 
                 // Clean up number conversion popup when Cancel or Save & Exit is clicked
@@ -3730,11 +3960,11 @@
                                       document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                     if (textEditor) {
                         // Always remove highlighting regardless of popup state
-                        removeNumberHighlight(textEditor);
+                        removeInteractiveHighlight(textEditor);
                     }
                     // Clean up popup if it exists
-                    if (currentNumberConversion) {
-                        cleanupCurrentNumberPopup();
+                    if (currentInteractivePopup) {
+                        cleanupCurrentInteractivePopup();
                     }
                 }
             }
@@ -4749,8 +4979,457 @@
     }
 
     // Interactive number conversion system
-    let currentNumberConversion = null;
+    let currentInteractivePopup = null;
     let declinedNumbers = new Set(); // Track numbers user said "no" to on this page
+
+    function computeRuleReplacement(rule, match) {
+        if (!rule || !match) {
+            return match ? match[0] : '';
+        }
+
+        if (typeof rule.replace === 'function') {
+            try {
+                return rule.replace.apply(null, [...match, match.index, match.input, match.groups || undefined]);
+            } catch (error) {
+                console.log('Interactive replace function failed:', error);
+                return match[0];
+            }
+        }
+
+        if (typeof rule.replace === 'string') {
+            let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+
+            const replacements = {
+                '$$': '$',
+                '$&': match[0]
+            };
+
+            jsReplacement = jsReplacement.replace(/\$\$|\$&|\$(\d+)/g, (token, index) => {
+                if (token === '$$' || token === '$&') {
+                    return replacements[token];
+                }
+                const groupValue = match[Number(index)] ?? '';
+                return groupValue;
+            });
+
+            return jsReplacement;
+        }
+
+        return match[0];
+    }
+
+    function prepareRegexPattern(rule) {
+        if (!rule || !rule.find) return null;
+
+        let processedFind = rule.find;
+        let processedFlags = rule.flags || 'g';
+
+        if (!processedFlags.includes('g')) {
+            processedFlags += 'g';
+        }
+
+        if (rule.enhancedBoundary && processedFlags.includes('e')) {
+            processedFlags = processedFlags.replace(/e/g, '');
+            const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+            const startBoundary = `(?<=^|${boundaryChars})`;
+            const endBoundary = `(?=${boundaryChars}|$)`;
+
+            if (processedFind.includes('\\b')) {
+                processedFind = processedFind
+                    .replace(/^\\b/, startBoundary)
+                    .replace(/\\b$/, endBoundary)
+                    .replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+            } else {
+                processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+            }
+        }
+
+        try {
+            return new RegExp(processedFind, processedFlags);
+        } catch (error) {
+            console.log(`Failed to prepare regex for rule "${rule.description || rule.find}":`, error);
+            return null;
+        }
+    }
+
+    function findInteractiveMatches(text, rule) {
+        if (!text || !rule) return [];
+
+        if (typeof rule.collectMatches === 'function') {
+            try {
+                const customMatches = rule.collectMatches(text) || [];
+                return customMatches
+                    .map(match => ({
+                        original: match.original ?? match.match ?? match.text ?? '',
+                        replacement: match.replacement ?? match.converted ?? match.value ?? '',
+                        position: typeof match.position === 'number' ? match.position : (typeof match.index === 'number' ? match.index : -1),
+                        uid: match.uid,
+                        rule: rule,
+                        metadata: match
+                    }))
+                    .filter(match => match.position >= 0 && match.original && match.replacement && match.original !== match.replacement);
+            } catch (error) {
+                console.log('Custom interactive match collector failed:', error);
+                return [];
+            }
+        }
+
+        const regex = prepareRegexPattern(rule);
+        if (!regex) return [];
+
+        const matches = [];
+        let execResult;
+        while ((execResult = regex.exec(text)) !== null) {
+            const replacement = computeRuleReplacement(rule, execResult);
+            if (replacement !== execResult[0]) {
+                matches.push({
+                    original: execResult[0],
+                    replacement: replacement,
+                    position: execResult.index,
+                    rule: rule,
+                    metadata: { groups: execResult.slice(1), input: execResult.input }
+                });
+            }
+
+            if (execResult.index === regex.lastIndex) {
+                regex.lastIndex++;
+            }
+        }
+
+        return matches;
+    }
+
+    function applyInteractiveChange(textEditor, match) {
+        if (!textEditor || !match) return false;
+
+        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            const value = textEditor.value;
+            const textAtPosition = value.slice(match.position, match.position + match.original.length);
+            if (textAtPosition !== match.original) {
+                console.warn('Interactive match mismatch at position', match.position, 'expected:', match.original, 'found:', textAtPosition);
+                return false;
+            }
+
+            const before = value.slice(0, match.position);
+            const after = value.slice(match.position + match.original.length);
+            const newValue = before + match.replacement + after;
+
+            textEditor.value = newValue;
+            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+        }
+
+        if (textEditor.isContentEditable) {
+            const content = textEditor.textContent || '';
+            const textAtPosition = content.slice(match.position, match.position + match.original.length);
+            if (textAtPosition !== match.original) {
+                console.warn('Interactive match mismatch at position', match.position, 'expected:', match.original, 'found:', textAtPosition);
+                return false;
+            }
+
+            const before = content.slice(0, match.position);
+            const after = content.slice(match.position + match.original.length);
+            const newContent = before + match.replacement + after;
+
+            textEditor.textContent = newContent;
+            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            return true;
+        }
+
+        return false;
+    }
+
+    function findCurrentMatchPosition(textEditor, match, hasChanges) {
+        if (!textEditor || !match) return -1;
+
+        let text;
+        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            text = textEditor.value;
+        } else if (textEditor.isContentEditable) {
+            text = textEditor.innerText || textEditor.textContent;
+        }
+
+        if (!text) return -1;
+
+        if (!hasChanges) {
+            const textAtPosition = text.slice(match.position, match.position + match.original.length);
+            if (textAtPosition === match.original) {
+                return match.position;
+            }
+        }
+
+        const searchStart = Math.max(0, match.position - 100);
+        const searchEnd = Math.min(text.length, match.position + 100);
+        const searchArea = text.slice(searchStart, searchEnd);
+        const escaped = match.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escaped);
+        const localMatch = regex.exec(searchArea);
+        if (localMatch) {
+            return searchStart + localMatch.index;
+        }
+
+        const fullMatch = regex.exec(text);
+        if (fullMatch) {
+            return fullMatch.index;
+        }
+
+        return -1;
+    }
+
+    function showInteractiveFixPopup(textEditor, match, handlers, context = {}) {
+        const { onYes, onNo, onNoToAll } = handlers || {};
+
+        cleanupCurrentInteractivePopup();
+        highlightInteractiveMatch(textEditor, match);
+
+        const popup = document.createElement('div');
+        popup.id = 'interactive-fix-popup';
+        popup.style.cssText = `
+            position: absolute;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            border-radius: 8px;
+            padding: 12px 16px;
+            z-index: 10003;
+            font-family: 'Programme', Arial, sans-serif;
+            min-width: 200px;
+            max-width: 320px;
+        `;
+
+        const question = document.createElement('div');
+        question.style.cssText = `
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #fff;
+            font-weight: 300;
+        `;
+
+        const escapeHTML = (value) => {
+            if (typeof value !== 'string') return '';
+            return value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        };
+
+        const questionText = typeof match.rule?.formatQuestion === 'function'
+            ? match.rule.formatQuestion(match)
+            : `Apply change <strong style="color: #ffeb3b;">${match.original}</strong> → <strong style="color: #4ee153;">${match.replacement}</strong>?`;
+
+        const descriptionText = match.rule?.description
+            ? `<div style="margin-top: 6px; font-size: 11px; color: rgba(255,255,255,0.7); font-weight: 200;">Rule: ${escapeHTML(match.rule.description)}</div>`
+            : '';
+
+        question.innerHTML = `${questionText}${descriptionText}`;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 6px;
+            justify-content: flex-start;
+        `;
+
+        const yesBtn = document.createElement('button');
+        yesBtn.textContent = 'Yes (Enter)';
+        yesBtn.style.cssText = `
+            background: rgba(76, 175, 80, 0.9);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: 'Programme', Arial, sans-serif;
+            font-weight: 300;
+            transition: background 0.2s ease;
+        `;
+
+        const noBtn = document.createElement('button');
+        noBtn.textContent = 'No (Esc)';
+        noBtn.style.cssText = `
+            background: rgba(158, 158, 158, 0.7);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 11px;
+            font-family: 'Programme', Arial, sans-serif;
+            font-weight: 300;
+            transition: background 0.2s ease;
+        `;
+
+        let noToAllBtn = null;
+        if (onNoToAll) {
+            const remainingCount = Math.max(1, (context.totalMatches || 0) - (context.currentIndex || 0));
+            noToAllBtn = document.createElement('button');
+            noToAllBtn.textContent = `No to all (${remainingCount})`;
+            noToAllBtn.style.cssText = `
+                background: rgba(244, 67, 54, 0.9);
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+                cursor: pointer;
+                font-size: 11px;
+                font-family: 'Programme', Arial, sans-serif;
+                font-weight: 300;
+                transition: background 0.2s ease;
+            `;
+        }
+
+        yesBtn.addEventListener('mouseenter', () => {
+            yesBtn.style.background = 'rgba(76, 175, 80, 1)';
+        });
+        yesBtn.addEventListener('mouseleave', () => {
+            yesBtn.style.background = 'rgba(76, 175, 80, 0.9)';
+        });
+
+        noBtn.addEventListener('mouseenter', () => {
+            noBtn.style.background = 'rgba(158, 158, 158, 0.9)';
+        });
+        noBtn.addEventListener('mouseleave', () => {
+            noBtn.style.background = 'rgba(158, 158, 158, 0.7)';
+        });
+
+        if (noToAllBtn) {
+            noToAllBtn.addEventListener('mouseenter', () => {
+                noToAllBtn.style.background = 'rgba(244, 67, 54, 1)';
+            });
+            noToAllBtn.addEventListener('mouseleave', () => {
+                noToAllBtn.style.background = 'rgba(244, 67, 54, 0.9)';
+            });
+        }
+
+        yesBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeInteractiveHighlight(textEditor);
+            cleanupCurrentInteractivePopup();
+            if (onYes) onYes();
+        });
+
+        noBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            removeInteractiveHighlight(textEditor);
+            cleanupCurrentInteractivePopup();
+            if (onNo) onNo();
+        });
+
+        if (noToAllBtn) {
+            noToAllBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                removeInteractiveHighlight(textEditor);
+                cleanupCurrentInteractivePopup();
+                onNoToAll();
+            });
+        }
+
+        const keyHandler = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                removeInteractiveHighlight(textEditor);
+                cleanupCurrentInteractivePopup();
+                if (onYes) onYes();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                removeInteractiveHighlight(textEditor);
+                cleanupCurrentInteractivePopup();
+                if (onNo) onNo();
+            }
+        };
+
+        document.addEventListener('keydown', keyHandler);
+
+        buttonContainer.appendChild(yesBtn);
+        buttonContainer.appendChild(noBtn);
+        if (noToAllBtn) buttonContainer.appendChild(noToAllBtn);
+        popup.appendChild(question);
+        popup.appendChild(buttonContainer);
+
+        const updatePosition = positionPopupBelowFormatSection(popup);
+        window.addEventListener('scroll', updatePosition);
+        window.addEventListener('resize', updatePosition);
+        textEditor.addEventListener('scroll', updatePosition);
+        updatePosition();
+
+        document.body.appendChild(popup);
+        currentInteractivePopup = { popup, keyHandler, updatePosition, scrollTarget: textEditor };
+    }
+
+    function processInteractiveFixes(textEditor, matches, options = {}) {
+        if (!textEditor || !Array.isArray(matches) || matches.length === 0) {
+            if (typeof options.onComplete === 'function') {
+                options.onComplete();
+            }
+            return;
+        }
+
+        const { onAccept, onDecline, onDeclineAll, onComplete } = options;
+        const queue = matches.map(match => ({ ...match }));
+        const allowNoToAll = typeof onDeclineAll === 'function';
+
+        const step = (currentIndex) => {
+            if (currentIndex >= queue.length) {
+                console.log('Interactive fixes completed');
+                if (typeof onComplete === 'function') {
+                    onComplete();
+                }
+                return;
+            }
+
+            const match = queue[currentIndex];
+            const position = findCurrentMatchPosition(textEditor, match, currentIndex > 0);
+            if (position === -1) {
+                console.log('Interactive match not found, skipping:', match.original);
+                step(currentIndex + 1);
+                return;
+            }
+
+            const currentMatch = { ...match, position };
+
+            showInteractiveFixPopup(textEditor, currentMatch, {
+                onYes: () => {
+                    const applied = applyInteractiveChange(textEditor, currentMatch);
+                    if (applied && typeof onAccept === 'function') {
+                        onAccept(currentMatch);
+                    }
+
+                    if (applied) {
+                        const lengthDiff = currentMatch.replacement.length - currentMatch.original.length;
+                        for (let i = currentIndex + 1; i < queue.length; i++) {
+                            if (queue[i].position > currentMatch.position) {
+                                queue[i].position += lengthDiff;
+                            }
+                        }
+                    }
+
+                    step(currentIndex + 1);
+                },
+                onNo: () => {
+                    if (typeof onDecline === 'function') {
+                        onDecline(currentMatch);
+                    }
+                    step(currentIndex + 1);
+                },
+                onNoToAll: allowNoToAll ? () => {
+                    if (typeof onDeclineAll === 'function') {
+                        onDeclineAll(queue.slice(currentIndex));
+                    }
+                    if (typeof onComplete === 'function') {
+                        onComplete();
+                    }
+                } : null
+            }, {
+                totalMatches: queue.length,
+                currentIndex
+            });
+        };
+
+        step(0);
+    }
     
     // Function to create unique ID for a number instance
     function createNumberUID(text, position, numberText) {
@@ -4835,7 +5514,39 @@
         if (convertibleNumbers.length === 0) {
             return;
         }
-        processNumberConversionsInteractively(textEditor, convertibleNumbers, 0);
+
+        const numberRule = {
+            id: 'numberToText',
+            description: 'Convert numbers to text',
+            formatQuestion: (match) => `Convert <strong style="color: #ffeb3b;">${match.original}</strong> to <strong style="color: #4ee153;">${match.replacement}</strong>?`
+        };
+
+        const matches = convertibleNumbers.map(item => ({
+            original: item.original,
+            replacement: item.converted,
+            position: item.position,
+            uid: item.uid,
+            rule: numberRule
+        }));
+
+        processInteractiveFixes(textEditor, matches, {
+            onDecline: (match) => {
+                if (match.uid) {
+                    declinedNumbers.add(match.uid);
+                    saveDeclinedNumbers();
+                    console.log('Added to declined numbers:', match.uid);
+                }
+            },
+            onDeclineAll: (remainingMatches) => {
+                remainingMatches.forEach(item => {
+                    if (item.uid) {
+                        declinedNumbers.add(item.uid);
+                        console.log('Declined (no to all):', item.original, 'UID:', item.uid);
+                    }
+                });
+                saveDeclinedNumbers();
+            }
+        });
     }
     
     function findConvertibleNumbers(text) {
@@ -5295,315 +6006,6 @@
     
 
     
-    function processNumberConversionsInteractively(textEditor, conversions, currentIndex) {
-        if (currentIndex >= conversions.length) {
-            console.log('Interactive number conversion completed');
-            return;
-        }
-        
-        const conversion = conversions[currentIndex];
-        
-        // Re-find the current position of this number in case text has changed
-        const currentPosition = findCurrentPosition(textEditor, conversion, currentIndex > 0);
-        if (currentPosition === -1) {
-            // Number not found, skip to next
-            console.log('Number not found, skipping:', conversion.original);
-            processNumberConversionsInteractively(textEditor, conversions, currentIndex + 1);
-            return;
-        }
-        
-        // Update the conversion with current position
-        const currentConversion = {
-            ...conversion,
-            position: currentPosition
-        };
-        
-        showNumberConversionPopup(textEditor, currentConversion, () => {
-            // Yes - apply this conversion
-            applyConversion(textEditor, currentConversion);
-            
-            // Update positions of remaining conversions
-            const lengthDiff = currentConversion.converted.length - currentConversion.original.length;
-            for (let i = currentIndex + 1; i < conversions.length; i++) {
-                if (conversions[i].position > currentConversion.position) {
-                    conversions[i].position += lengthDiff;
-                }
-            }
-            
-            processNumberConversionsInteractively(textEditor, conversions, currentIndex + 1);
-        }, () => {
-            // No - skip this conversion
-            processNumberConversionsInteractively(textEditor, conversions, currentIndex + 1);
-        }, () => {
-            // No to all - decline all remaining conversions
-            console.log('No to all selected - declining all remaining number conversions');
-            
-            // Add all remaining conversions (including current) to declined list
-            for (let i = currentIndex; i < conversions.length; i++) {
-                declinedNumbers.add(conversions[i].uid);
-                console.log('Declined (no to all):', conversions[i].original, 'UID:', conversions[i].uid);
-            }
-            
-            // Save all declined numbers to localStorage
-            saveDeclinedNumbers();
-            
-            return; // Exit without processing any more conversions
-        }, conversions, currentIndex);
-    }
-    
-    function findCurrentPosition(textEditor, conversion, hasChanges) {
-        let text;
-        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-            text = textEditor.value;
-        } else if (textEditor.isContentEditable) {
-            text = textEditor.innerText || textEditor.textContent;
-        }
-        
-        if (!text) return -1;
-        
-        // If no changes have been made yet, use original position
-        if (!hasChanges) {
-            const textAtPosition = text.slice(conversion.position, conversion.position + conversion.original.length);
-            if (textAtPosition === conversion.original) {
-                return conversion.position;
-            }
-        }
-        
-        // Search for the number near the expected position
-        const searchStart = Math.max(0, conversion.position - 100);
-        const searchEnd = Math.min(text.length, conversion.position + 100);
-        const searchArea = text.slice(searchStart, searchEnd);
-        
-        const regex = new RegExp('\\b' + conversion.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
-        const match = regex.exec(searchArea);
-        
-        if (match) {
-            return searchStart + match.index;
-        }
-        
-        // Fallback: search the entire text
-        const fullMatch = regex.exec(text);
-        if (fullMatch) {
-            return fullMatch.index;
-        }
-        
-        return -1; // Not found
-    }
-    
-    function applyConversion(textEditor, conversion) {
-        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-            const value = textEditor.value;
-            
-            // Double-check that we're replacing the right text at the right position
-            const textAtPosition = value.slice(conversion.position, conversion.position + conversion.original.length);
-            if (textAtPosition !== conversion.original) {
-                console.warn('Number mismatch at position', conversion.position, 'expected:', conversion.original, 'found:', textAtPosition);
-                return;
-            }
-            
-            const before = value.slice(0, conversion.position);
-            const after = value.slice(conversion.position + conversion.original.length);
-            const newValue = before + conversion.converted + after;
-            
-            textEditor.value = newValue;
-            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
-            
-            console.log('Applied conversion:', conversion.original, '→', conversion.converted, 'at position', conversion.position);
-        } else if (textEditor.isContentEditable) {
-            const content = textEditor.textContent;
-            
-            // Double-check that we're replacing the right text at the right position
-            const textAtPosition = content.slice(conversion.position, conversion.position + conversion.original.length);
-            if (textAtPosition !== conversion.original) {
-                console.warn('Number mismatch at position', conversion.position, 'expected:', conversion.original, 'found:', textAtPosition);
-            return;
-        }
-        
-            const before = content.slice(0, conversion.position);
-            const after = content.slice(conversion.position + conversion.original.length);
-            const newContent = before + conversion.converted + after;
-            
-            textEditor.textContent = newContent;
-            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
-            
-            console.log('Applied conversion:', conversion.original, '→', conversion.converted, 'at position', conversion.position);
-        }
-    }
-    
-    function showNumberConversionPopup(textEditor, conversion, onYes, onNo, onNoToAll, conversions, currentIndex) {
-        // Remove any existing popup and associated listeners
-        cleanupCurrentNumberPopup();
-        
-        // Highlight the number in red in the text editor
-        highlightNumberInEditor(textEditor, conversion);
-        
-        // Create popup with sleek transparent styling
-        const popup = document.createElement('div');
-        popup.id = 'number-conversion-popup';
-        popup.style.cssText = `
-            position: absolute;
-            background: rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(8px);
-            border-radius: 8px;
-            padding: 12px 16px;
-            z-index: 10003;
-            font-family: 'Programme', Arial, sans-serif;
-            min-width: 200px;
-            max-width: 280px;
-        `;
-        
-        const question = document.createElement('div');
-        question.style.cssText = `
-            margin-bottom: 10px;
-            font-size: 13px;
-            color: #fff;
-            font-weight: 300;
-        `;
-        question.innerHTML = `Convert <strong style="color: #ffeb3b;">${conversion.original}</strong> to <strong style="color: #4ee153;">${conversion.converted}</strong>?`;
-        
-        const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = `
-            display: flex;
-            gap: 6px;
-            justify-content: flex-start;
-        `;
-        
-        const yesBtn = document.createElement('button');
-        yesBtn.textContent = 'Yes (Enter)';
-        yesBtn.style.cssText = `
-            background: rgba(76, 175, 80, 0.9);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-size: 11px;
-            font-family: 'Programme', Arial, sans-serif;
-            font-weight: 300;
-            transition: background 0.2s ease;
-        `;
-        
-        const noBtn = document.createElement('button');
-        noBtn.textContent = 'No (Esc)';
-        noBtn.style.cssText = `
-            background: rgba(158, 158, 158, 0.7);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-size: 11px;
-            font-family: 'Programme', Arial, sans-serif;
-            font-weight: 300;
-            transition: background 0.2s ease;
-        `;
-        
-        const noToAllBtn = document.createElement('button');
-        // Show how many numbers will be declined
-        const remainingCount = conversions ? conversions.length - currentIndex : 1;
-        noToAllBtn.textContent = `No to all (${remainingCount})`;
-        noToAllBtn.style.cssText = `
-            background: rgba(244, 67, 54, 0.9);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-size: 11px;
-            font-family: 'Programme', Arial, sans-serif;
-            font-weight: 300;
-            transition: background 0.2s ease;
-        `;
-        
-        // Hover effects
-        yesBtn.addEventListener('mouseenter', () => {
-            yesBtn.style.background = 'rgba(76, 175, 80, 1)';
-        });
-        yesBtn.addEventListener('mouseleave', () => {
-            yesBtn.style.background = 'rgba(76, 175, 80, 0.9)';
-        });
-        
-        noBtn.addEventListener('mouseenter', () => {
-            noBtn.style.background = 'rgba(158, 158, 158, 0.9)';
-        });
-        noBtn.addEventListener('mouseleave', () => {
-            noBtn.style.background = 'rgba(158, 158, 158, 0.7)';
-        });
-        
-        noToAllBtn.addEventListener('mouseenter', () => {
-            noToAllBtn.style.background = 'rgba(244, 67, 54, 1)';
-        });
-        noToAllBtn.addEventListener('mouseleave', () => {
-            noToAllBtn.style.background = 'rgba(244, 67, 54, 0.9)';
-        });
-        
-        yesBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            removeNumberHighlight(textEditor);
-            cleanupCurrentNumberPopup();
-            onYes();
-        });
-
-        noBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            // Remember this number was declined
-            declinedNumbers.add(conversion.uid);
-            saveDeclinedNumbers();
-            console.log('Added to declined numbers:', conversion.uid);
-            removeNumberHighlight(textEditor);
-            cleanupCurrentNumberPopup();
-            onNo();
-        });
-
-        noToAllBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            removeNumberHighlight(textEditor);
-            cleanupCurrentNumberPopup();
-            if (onNoToAll) onNoToAll();
-        });
-        
-        // Keyboard support
-        const keyHandler = (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                removeNumberHighlight(textEditor);
-                cleanupCurrentNumberPopup();
-                onYes();
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                // Remember this number was declined
-                declinedNumbers.add(conversion.uid);
-                saveDeclinedNumbers();
-                console.log('Added to declined numbers (Escape key):', conversion.uid);
-                removeNumberHighlight(textEditor);
-                cleanupCurrentNumberPopup();
-                onNo();
-            }
-        };
-        
-        document.addEventListener('keydown', keyHandler);
-        
-        buttonContainer.appendChild(yesBtn);
-        buttonContainer.appendChild(noBtn);
-        buttonContainer.appendChild(noToAllBtn);
-        popup.appendChild(question);
-        popup.appendChild(buttonContainer);
-        
-        // Position popup and update on scroll
-        const updatePosition = positionPopupBelowFormatSection(popup);
-        window.addEventListener('scroll', updatePosition);
-        window.addEventListener('resize', updatePosition);
-        textEditor.addEventListener('scroll', updatePosition);
-        updatePosition();
-
-        document.body.appendChild(popup);
-        currentNumberConversion = { popup, keyHandler, updatePosition, scrollTarget: textEditor };
-
-        // Keep focus on the editor so the number highlight remains visible
-    }
     
     function scrollToPosition(textEditor, position) {
         // Focus the editor first
@@ -5713,9 +6115,9 @@
         return textNodes;
     }
     
-    function highlightNumberInEditor(textEditor, conversion) {
+    function highlightInteractiveMatch(textEditor, match) {
         // Scroll to the conversion position first
-        scrollToPosition(textEditor, conversion.position);
+        scrollToPosition(textEditor, match.position);
 
         if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
             // For textarea/input we create a temporary overlay to highlight characters
@@ -5723,8 +6125,8 @@
             textEditor._originalSelectionStart = textEditor.selectionStart;
             textEditor._originalSelectionEnd = textEditor.selectionEnd;
 
-            const startPos = conversion.position;
-            const endPos = conversion.position + conversion.original.length;
+            const startPos = match.position;
+            const endPos = match.position + match.original.length;
 
             textEditor.focus();
 
@@ -5735,7 +6137,7 @@
             }
 
             const overlay = document.createElement('div');
-            overlay.dataset.numberHighlightOverlay = 'true';
+            overlay.dataset.interactiveHighlightOverlay = 'true';
             const styles = window.getComputedStyle(textEditor);
             overlay.style.position = 'absolute';
             overlay.style.left = textEditor.offsetLeft + 'px';
@@ -5763,7 +6165,7 @@
             const before = escapeHTML(textEditor.value.slice(0, startPos));
             const numberText = escapeHTML(textEditor.value.slice(startPos, endPos));
             const after = escapeHTML(textEditor.value.slice(endPos));
-            overlay.innerHTML = `${before}<span style="background:#ff5252;color:white">${numberText}</span>${after}`;
+            overlay.innerHTML = `${before}<span data-interactive-highlight="true" style="background:#ff5252;color:white">${numberText}</span>${after}`;
 
             parent.appendChild(overlay);
 
@@ -5786,15 +6188,15 @@
             textEditor._highlightInfo = { overlay, handler: syncOverlay };
 
         } else if (textEditor.isContentEditable) {
-            // For contenteditable, wrap the number in a red span
+            // For contenteditable, wrap the match in a red span
             const textContent = textEditor.textContent || textEditor.innerText;
-            const beforeText = textContent.slice(0, conversion.position);
-            const numberText = textContent.slice(conversion.position, conversion.position + conversion.original.length);
-            const afterText = textContent.slice(conversion.position + conversion.original.length);
-            
+            const beforeText = textContent.slice(0, match.position);
+            const numberText = textContent.slice(match.position, match.position + match.original.length);
+            const afterText = textContent.slice(match.position + match.original.length);
+
             // Create highlighted version
-            const highlightedHTML = beforeText + 
-                `<span style="background-color: #ff5252; color: white; padding: 1px 2px; border-radius: 2px;" data-number-highlight="true">${numberText}</span>` + 
+            const highlightedHTML = beforeText +
+                `<span style="background-color: #ff5252; color: white; padding: 1px 2px; border-radius: 2px;" data-interactive-highlight="true">${numberText}</span>` +
                 afterText;
             
             // Store original content for restoration
@@ -5805,25 +6207,25 @@
             textEditor.innerHTML = highlightedHTML;
             
             // Scroll the highlighted number into view
-            const highlightSpan = textEditor.querySelector('[data-number-highlight="true"]');
+            const highlightSpan = textEditor.querySelector('[data-interactive-highlight="true"]');
             if (highlightSpan) {
                 highlightSpan.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
             }
         }
     }
     
-    function removeNumberHighlight(textEditor) {
-        console.log('removeNumberHighlight called for:', textEditor?.tagName);
+    function removeInteractiveHighlight(textEditor) {
+        console.log('removeInteractiveHighlight called for:', textEditor?.tagName);
         
         // Global cleanup - remove any highlight overlays in the entire document
-        const allOverlays = document.querySelectorAll('[data-number-highlight-overlay="true"]');
+        const allOverlays = document.querySelectorAll('[data-interactive-highlight-overlay="true"]');
         allOverlays.forEach(overlay => {
             console.log('Removing global highlight overlay');
             overlay.remove();
         });
         
         // Global cleanup - remove any highlight spans in contenteditable
-        const allHighlightSpans = document.querySelectorAll('[data-number-highlight="true"]');
+        const allHighlightSpans = document.querySelectorAll('[data-interactive-highlight="true"]');
         allHighlightSpans.forEach(span => {
             console.log('Removing global highlight span');
             const parent = span.parentNode;
@@ -5879,7 +6281,7 @@
             }
             
             // Additional cleanup for any remaining highlight spans in this editor
-            const remainingSpans = textEditor.querySelectorAll('[data-number-highlight="true"]');
+            const remainingSpans = textEditor.querySelectorAll('[data-interactive-highlight="true"]');
             remainingSpans.forEach(span => {
                 console.log('Removing remaining highlight span from contenteditable');
                 const parent = span.parentNode;
@@ -5892,9 +6294,9 @@
         console.log('Number highlight cleanup completed');
     }
 
-    function cleanupCurrentNumberPopup() {
-        if (currentNumberConversion && currentNumberConversion.popup) {
-            const { popup, keyHandler, updatePosition, scrollTarget } = currentNumberConversion;
+    function cleanupCurrentInteractivePopup() {
+        if (currentInteractivePopup && currentInteractivePopup.popup) {
+            const { popup, keyHandler, updatePosition, scrollTarget } = currentInteractivePopup;
             if (updatePosition) {
                 window.removeEventListener('scroll', updatePosition);
                 window.removeEventListener('resize', updatePosition);
@@ -5906,7 +6308,7 @@
             if (popup && popup.parentNode) {
                 popup.parentNode.removeChild(popup);
             }
-            currentNumberConversion = null;
+            currentInteractivePopup = null;
         }
     }
     
@@ -5988,14 +6390,49 @@
 
         // Apply auto fixes
         let fixedText = text;
+        let textAppliedToEditor = false;
+
+        const applyFixedTextToEditor = () => {
+            if (textAppliedToEditor) {
+                return;
+            }
+
+            if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+                const cursorPos = textEditor.selectionStart;
+                textEditor.value = fixedText;
+
+                const lengthDiff = fixedText.length - text.length;
+                textEditor.selectionStart = textEditor.selectionEnd = Math.max(0, cursorPos + lengthDiff);
+
+                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            } else if (textEditor.isContentEditable) {
+                const selection = window.getSelection();
+                const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+                textEditor.textContent = fixedText;
+
+                if (range) {
+                    try {
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    } catch (e) {
+                        const newRange = document.createRange();
+                        newRange.selectNodeContents(textEditor);
+                        newRange.collapse(false);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
+                    }
+                }
+
+                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            textAppliedToEditor = true;
+        };
 
         console.log('Before fixes:', fixedText.substring(0, 100) + '...');
 
-        // Fix "ima", "imma" and "i'mma" to "I'ma" (case insensitive)
         if (autoFixSettings.capitalizeI) {
-            fixedText = fixedText.replace(/\b(i'mma|imma|ima)\b/gi, "I'ma");
-            console.log('After ima fixes:', fixedText !== text ? 'CHANGED' : 'NO CHANGE');
-
             // Fix standalone "i" to "I" when followed by space, dash, punctuation, or end of string
             fixedText = fixedText.replace(/\bi(?=[\s\-\.,!?;:\)\]\}'""]|$)/g, "I");
             console.log('After i fixes:', fixedText.includes(' I ') ? 'FOUND I' : 'NO I FOUND');
@@ -6229,12 +6666,6 @@
             if (match === 'FUCKIN') return "FUCKIN'";
             if (match === 'Fuckin') return "Fuckin'";
             return "fuckin'";
-        });
-        
-        fixedText = fixedText.replace(/\byall\b(?!')/gi, function(match) {
-            if (match === 'YALL') return "Y'ALL";
-            if (match === 'Yall') return "Y'all";
-            return "y'all";
         });
         
         // Words that need apostrophes at the beginning (but only in certain contexts)
@@ -6537,155 +6968,102 @@
 
 
         // Apply custom regex rules BEFORE number conversion
+        let interactiveRuleMatches = [];
+        const pendingInteractiveRules = [];
+
         if (autoFixSettings.customRegex) {
             console.log('Applying custom regex rules...');
-            
-            // Process rules from groups
-            if (autoFixSettings.ruleGroups) {
-                autoFixSettings.ruleGroups.forEach((group, groupIndex) => {
-                    group.rules.forEach((rule, ruleIndex) => {
-                        if (rule.enabled !== false) {
-                            try {
-                                let processedFind = rule.find;
-                                let processedFlags = rule.flags || 'gi';
-                                
-                                // Enhanced boundary processing
-                                if (rule.enhancedBoundary && processedFlags.includes('e')) {
-                                    // Remove 'e' from flags as it's not a standard regex flag
-                                    processedFlags = processedFlags.replace(/e/g, '');
-                                    
-                                    // Convert simple word boundary patterns to enhanced boundaries
-                                    // Replace \b with enhanced boundary pattern
-                                    if (processedFind.includes('\\b')) {
-                                        // Enhanced boundary characters include: start/end of string, whitespace, brackets, parentheses, common punctuation, em dashes
-                                        const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
-                                        const startBoundary = `(?<=^|${boundaryChars})`;
-                                        const endBoundary = `(?=${boundaryChars}|$)`;
-                                        
-                                        // Replace word boundaries with enhanced boundaries
-                                        // Handle starting \b
-                                        processedFind = processedFind.replace(/^\\b/, startBoundary);
-                                        // Handle ending \b
-                                        processedFind = processedFind.replace(/\\b$/, endBoundary);
-                                        // Handle \b in the middle (both sides) - use lookbehind and lookahead
-                                        processedFind = processedFind.replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
-                                        
-                                        console.log(`Enhanced boundary applied to rule "${rule.description}" from group "${group.title}":`, rule.find, '->', processedFind);
-                                    }
-                                    // Also handle rules without \b but with enhancedBoundary flag - wrap the entire pattern
-                                    else {
-                                        const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
-                                        const startBoundary = `(?<=^|${boundaryChars})`;
-                                        const endBoundary = `(?=${boundaryChars}|$)`;
-                                        
-                                        // Wrap the pattern with enhanced boundaries, using lookbehind/lookahead
-                                        processedFind = `${startBoundary}${processedFind}${endBoundary}`;
-                                        
-                                        console.log(`Enhanced boundary applied to rule "${rule.description}" from group "${group.title}":`, rule.find, '->', processedFind);
-                                    }
-                                }
-                                
-                                const regex = new RegExp(processedFind, processedFlags);
-                                const beforeLength = fixedText.length;
-                                
-                                // Handle both string and function replacements
-                                if (typeof rule.replace === 'function') {
-                                    fixedText = fixedText.replace(regex, rule.replace);
-                                } else {
-                                    // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
-                                    let jsReplacement = rule.replace;
-                                    if (typeof jsReplacement === 'string') {
-                                        // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
-                                        // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
-                                        jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
-                                    }
-                                    
-                                    fixedText = fixedText.replace(regex, jsReplacement);
-                                }
-                                
-                                const afterLength = fixedText.length;
-                                if (beforeLength !== afterLength) {
-                                    console.log(`Custom rule "${rule.description}" from group "${group.title}" applied changes`);
-                                }
-                            } catch (e) {
-                                console.log(`Custom regex rule "${rule.description}" from group "${group.title}" failed:`, e.message);
+
+            const processRules = (rules, contextLabel) => {
+                rules.forEach(rule => {
+                    if (rule.enabled === false) {
+                        return;
+                    }
+
+                    try {
+                        let processedFind = rule.find;
+                        let processedFlags = rule.flags || 'gi';
+
+                        if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                            processedFlags = processedFlags.replace(/e/g, '');
+                            const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                            const startBoundary = `(?<=^|${boundaryChars})`;
+                            const endBoundary = `(?=${boundaryChars}|$)`;
+
+                            if (processedFind.includes('\\b')) {
+                                processedFind = processedFind
+                                    .replace(/^\\b/, startBoundary)
+                                    .replace(/\\b$/, endBoundary)
+                                    .replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+
+                                console.log(`Enhanced boundary applied to rule "${rule.description}" from ${contextLabel}:`, rule.find, '->', processedFind);
+                            } else {
+                                processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                                console.log(`Enhanced boundary applied to rule "${rule.description}" from ${contextLabel}:`, rule.find, '->', processedFind);
                             }
                         }
-                    });
-                });
-            }
-            
-            // Process ungrouped rules
-            if (autoFixSettings.ungroupedRules) {
-                autoFixSettings.ungroupedRules.forEach((rule, index) => {
-                    if (rule.enabled !== false) {
-                        try {
-                            let processedFind = rule.find;
-                            let processedFlags = rule.flags || 'gi';
-                            
-                            // Enhanced boundary processing
-                            if (rule.enhancedBoundary && processedFlags.includes('e')) {
-                                // Remove 'e' from flags as it's not a standard regex flag
-                                processedFlags = processedFlags.replace(/e/g, '');
-                                
-                                // Convert simple word boundary patterns to enhanced boundaries
-                                // Replace \b with enhanced boundary pattern
-                                if (processedFind.includes('\\b')) {
-                                    // Enhanced boundary characters include: start/end of string, whitespace, brackets, parentheses, common punctuation, em dashes
-                                    const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
-                                    const startBoundary = `(?<=^|${boundaryChars})`;
-                                    const endBoundary = `(?=${boundaryChars}|$)`;
-                                    
-                                    // Replace word boundaries with enhanced boundaries
-                                    // Handle starting \b
-                                    processedFind = processedFind.replace(/^\\b/, startBoundary);
-                                    // Handle ending \b
-                                    processedFind = processedFind.replace(/\\b$/, endBoundary);
-                                    // Handle \b in the middle (both sides) - use lookbehind and lookahead
-                                    processedFind = processedFind.replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
-                                    
-                                    console.log(`Enhanced boundary applied to ungrouped rule "${rule.description}":`, rule.find, '->', processedFind);
-                                }
-                                // Also handle rules without \b but with enhancedBoundary flag - wrap the entire pattern
-                                else {
-                                    const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
-                                    const startBoundary = `(?<=^|${boundaryChars})`;
-                                    const endBoundary = `(?=${boundaryChars}|$)`;
-                                    
-                                    // Wrap the pattern with enhanced boundaries, using lookbehind/lookahead
-                                    processedFind = `${startBoundary}${processedFind}${endBoundary}`;
-                                    
-                                    console.log(`Enhanced boundary applied to ungrouped rule "${rule.description}":`, rule.find, '->', processedFind);
+
+                        let replaceValue = rule.replace;
+                        if (typeof replaceValue === 'string') {
+                            const trimmed = replaceValue.trim();
+                            if (trimmed.startsWith('function') || trimmed.startsWith('(')) {
+                                try {
+                                    // Evaluate function strings (both traditional and arrow functions)
+                                    replaceValue = eval(trimmed);
+                                } catch (error) {
+                                    console.log(`Failed to evaluate replace function for rule "${rule.description}" from ${contextLabel}:`, error);
+                                    replaceValue = rule.replace;
                                 }
                             }
-                            
+                        }
+
+                        const processedRule = {
+                            ...rule,
+                            replace: replaceValue,
+                            find: processedFind,
+                            flags: processedFlags,
+                            enhancedBoundary: false,
+                            contextLabel
+                        };
+
+                        if (rule.ask) {
+                            pendingInteractiveRules.push(processedRule);
+                            console.log(`Interactive rule "${rule.description}" from ${contextLabel} queued for review`);
+                        } else {
                             const regex = new RegExp(processedFind, processedFlags);
                             const beforeLength = fixedText.length;
-                            
-                            // Handle both string and function replacements
-                            if (typeof rule.replace === 'function') {
-                                fixedText = fixedText.replace(regex, rule.replace);
+
+                            if (typeof replaceValue === 'function') {
+                                fixedText = fixedText.replace(regex, replaceValue);
                             } else {
-                                // Convert backslash-based capture group references (\1, \2, etc.) to JavaScript format ($1, $2, etc.)
-                                let jsReplacement = rule.replace;
+                                let jsReplacement = replaceValue;
                                 if (typeof jsReplacement === 'string') {
-                                    // Replace \1, \2, \3, etc. with $1, $2, $3, etc.
-                                    // Use negative lookbehind to avoid replacing escaped backslashes (\\1)
                                     jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
                                 }
-                                
+
                                 fixedText = fixedText.replace(regex, jsReplacement);
                             }
-                            
-                            const afterLength = fixedText.length;
-                            if (beforeLength !== afterLength) {
-                                console.log(`Ungrouped custom rule "${rule.description}" applied changes`);
+
+                            if (beforeLength !== fixedText.length) {
+                                console.log(`Custom rule "${rule.description}" from ${contextLabel} applied changes`);
                             }
-                        } catch (e) {
-                            console.log(`Ungrouped custom regex rule "${rule.description}" failed:`, e.message);
                         }
+                    } catch (e) {
+                        console.log(`Custom regex rule "${rule.description}" from ${contextLabel} failed:`, e.message);
                     }
                 });
+            };
+
+            if (autoFixSettings.ruleGroups) {
+                autoFixSettings.ruleGroups.forEach(group => {
+                    if (group.rules && Array.isArray(group.rules)) {
+                        processRules(group.rules, `group "${group.title}"`);
+                    }
+                });
+            }
+
+            if (autoFixSettings.ungroupedRules) {
+                processRules(autoFixSettings.ungroupedRules, 'ungrouped rules');
             }
         }
 
@@ -6693,23 +7071,50 @@
         if (autoFixSettings.numberToText === 'on') {
             console.log('Converting numbers to text automatically...');
             fixedText = convertNumbersToText(fixedText);
-        } else if (autoFixSettings.numberToText === 'ask') {
-            console.log('Interactive number conversion mode...');
-            // Apply fixed text first, then start interactive conversion
-            if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-                textEditor.value = fixedText;
-                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
-            } else if (textEditor.isContentEditable) {
-                textEditor.textContent = fixedText;
-                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        const isNumberConversionInteractive = autoFixSettings.numberToText === 'ask';
+
+        if (pendingInteractiveRules.length > 0) {
+            pendingInteractiveRules.forEach(rule => {
+                const matches = findInteractiveMatches(fixedText, rule);
+                if (matches.length > 0) {
+                    matches.forEach(match => {
+                        match.rule = rule;
+                    });
+                    interactiveRuleMatches.push(...matches);
+                    console.log(`Interactive rule "${rule.description}" from ${rule.contextLabel} found ${matches.length} match${matches.length === 1 ? '' : 'es'}`);
+                }
+            });
+
+            interactiveRuleMatches.sort((a, b) => a.position - b.position);
+        }
+
+        if (interactiveRuleMatches.length > 0) {
+            applyFixedTextToEditor();
+
+            processInteractiveFixes(textEditor, interactiveRuleMatches, {
+                onComplete: () => {
+                    if (isNumberConversionInteractive) {
+                        console.log('Interactive number conversion mode...');
+                        setTimeout(() => {
+                            startInteractiveNumberConversion(textEditor);
+                        }, 100);
+                    }
+                }
+            });
+
+            if (isNumberConversionInteractive) {
+                return;
             }
-            
-            // Now start interactive conversion on the updated text
+        }
+
+        if (isNumberConversionInteractive) {
+            applyFixedTextToEditor();
+            console.log('Interactive number conversion mode...');
             setTimeout(() => {
                 startInteractiveNumberConversion(textEditor);
             }, 100);
-            
-            // Skip the normal text application below since we already did it
             return;
         }
 
@@ -6717,40 +7122,7 @@
         console.log('Changes made:', text !== fixedText);
 
         // Apply the fixed text back to the editor
-        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-            const cursorPos = textEditor.selectionStart;
-            textEditor.value = fixedText;
-            
-            // Try to maintain cursor position approximately
-            const lengthDiff = fixedText.length - text.length;
-            textEditor.selectionStart = textEditor.selectionEnd = Math.max(0, cursorPos + lengthDiff);
-            
-            // Trigger input event
-            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
-        } else if (textEditor.isContentEditable) {
-            const selection = window.getSelection();
-            const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-            
-            textEditor.textContent = fixedText;
-            
-            // Try to restore cursor position
-            if (range) {
-                try {
-                    selection.removeAllRanges();
-                    selection.addRange(range);
-                } catch (e) {
-                    // If restoring selection fails, just place cursor at end
-                    const newRange = document.createRange();
-                    newRange.selectNodeContents(textEditor);
-                    newRange.collapse(false);
-                    selection.removeAllRanges();
-                    selection.addRange(newRange);
-                }
-            }
-            
-            // Trigger input event
-            textEditor.dispatchEvent(new Event('input', { bubbles: true }));
-        }
+        applyFixedTextToEditor();
 
         console.log('Auto fix completed');
         
@@ -7584,7 +7956,7 @@
 
         // Immediate cleanup of any lingering highlights from previous sessions
         console.log('Initializing: cleaning up any existing highlights...');
-        removeNumberHighlight(null);
+        removeInteractiveHighlight(null);
 
         // Remove the "How to Format Lyrics" explainer div
         removeFormatExplainerDiv();
@@ -7596,7 +7968,7 @@
         observer.observe(document.body, { childList: true, subtree: true });
 
         // Reset restore prompt flag for new page
-        hasShownRestorePrompt = false;
+        restorePromptShownForContext.clear();
         
         // Load declined numbers from localStorage (per page, expires after 1 week)
         declinedNumbers.clear();
@@ -7615,61 +7987,59 @@
 
 
 
-        // Listen for focus on lyrics editor to check for auto-saved content
+        // Listen for focus on editors to check for auto-saved content
         document.addEventListener('focus', (e) => {
             const target = e.target;
-            // Check if focusing on lyrics editor specifically
-            // First ensure target is an Element and has the closest method
-            const isLyricsEditor = target && target.closest && target.matches &&
-                                  target.closest('[class*="LyricsEdit"]') && 
-                                  (target.matches('textarea') || target.isContentEditable);
+            if (!isTextEntryElement(target)) {
+                return;
+            }
 
-            if (isLyricsEditor) {
-                // Always clean up any lingering highlights when editor is opened
-                console.log('Cleaning up any lingering highlights on editor focus...');
-                removeNumberHighlight(target);
-                
-                if (!hasShownRestorePrompt) {
-                    hasShownRestorePrompt = true;
-                    console.log('Lyrics editor focused (typing cursor active), checking for auto-saved content...');
-                    
-                    try {
-                        const saveData = localStorage.getItem(getAutoSaveKey());
-                        if (saveData) {
-                            const parsed = JSON.parse(saveData);
-                            const now = Date.now();
-                            const saveAge = now - parsed.timestamp;
-                            const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+            const context = detectEditorContext(target);
+            if (!context) {
+                return;
+            }
 
-                            // Only offer to restore if save is less than 24 hours old
-                            if (saveAge <= maxAge) {
-                                // Get current editor content for comparison
-                                let currentContent = '';
-                                if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-                                    currentContent = target.value || '';
-                                } else if (target.isContentEditable) {
-                                    currentContent = target.innerText || target.textContent || '';
-                                }
+            activeEditors.set(context.key, { element: target, context });
+            lastFocusedContextKey = context.key;
 
-                                // Only show restore prompt if autosaved content is different from current content
-                                if (parsed.content && parsed.content.trim() !== currentContent.trim()) {
-                                    const saveDate = new Date(parsed.timestamp);
-                                    const timeString = saveDate.toLocaleString();
-                                    console.log('Found different auto-saved content, showing restore notification...');
-                                    
-                                    // Show restore notification immediately since editor is ready
-                                    showRestoreNotification(parsed, timeString);
-                                } else {
-                                    console.log('Auto-saved content matches current content, clearing auto-save...');
-                                    clearAutoSave();
-                                }
+            if (context.type === 'lyrics') {
+                console.log('Cleaning up any lingering highlights on lyrics editor focus...');
+                removeInteractiveHighlight(target);
+            }
+
+            if (!restorePromptShownForContext.has(context.key)) {
+                console.log(`${context.label} focused, checking for auto-saved content...`);
+
+                try {
+                    const saveDataRaw = localStorage.getItem(getAutoSaveKey(context.key));
+                    if (saveDataRaw) {
+                        const parsed = JSON.parse(saveDataRaw);
+                        const now = Date.now();
+                        const saveAge = now - parsed.timestamp;
+                        const maxAge = 24 * 60 * 60 * 1000; // 24 hours
+
+                        if (saveAge <= maxAge) {
+                            const { content: currentContent = '' } = extractEditorContent(target);
+
+                            if (parsed.content && parsed.content.trim() !== (currentContent || '').trim()) {
+                                const saveDate = new Date(parsed.timestamp);
+                                const timeString = saveDate.toLocaleString();
+                                console.log('Found different auto-saved content, showing restore notification...');
+                                showRestoreNotification(parsed, timeString, {
+                                    contextKey: context.key,
+                                    contextLabel: context.label,
+                                    editorElement: target
+                                });
                             } else {
-                                clearAutoSave();
+                                console.log('Auto-saved content matches current content, clearing auto-save...');
+                                clearAutoSave(context.key);
                             }
+                        } else {
+                            clearAutoSave(context.key);
                         }
-                    } catch (e) {
-                        console.log('Failed to check auto-save:', e);
                     }
+                } catch (err) {
+                    console.log('Failed to check auto-save:', err);
                 }
             }
         }, true); // Use capture phase to catch focus events early
@@ -7683,9 +8053,9 @@
                                   document.querySelector('textarea') ||
                                   document.querySelector('[contenteditable="true"]');
                 if (textEditor) {
-                    removeNumberHighlight(textEditor);
+                    removeInteractiveHighlight(textEditor);
                 }
-                cleanupCurrentNumberPopup();
+                cleanupCurrentInteractivePopup();
             }
             
             if (isEditing) {
@@ -7843,7 +8213,7 @@
                         // Small delay to ensure the editor is fully rendered
                         // Immediate cleanup
                         console.log('Lyrics editor appeared, immediately cleaning up any lingering highlights...');
-                        removeNumberHighlight(null); // Global cleanup first
+                        removeInteractiveHighlight(null); // Global cleanup first
                         
                         setTimeout(() => {
                             addButtonToEditor();
@@ -7852,7 +8222,7 @@
                             const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
                                               document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                             if (textEditor) {
-                                removeNumberHighlight(textEditor);
+                                removeInteractiveHighlight(textEditor);
                             }
                         }, 1200); // Longer delay to wait for other extensions
                     }
