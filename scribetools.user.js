@@ -353,7 +353,7 @@
         },
         
         // Create rule element (unified for both regular and search results)
-        createRuleElement(rule, index, onToggle, onDelete, isSearchResult = false) {
+        createRuleElement(rule, index, onToggle, onDelete, onModeChange, isSearchResult = false) {
             const ruleDiv = document.createElement('div');
             ruleDiv.style.cssText = `
                 border: 1px solid ${this.COLORS.borderLight};
@@ -365,7 +365,13 @@
             
             const header = this.createFlexContainer('row', '8px', {
                 justifyContent: 'space-between',
-                marginBottom: '8px'
+                marginBottom: '8px',
+                alignItems: 'center'
+            });
+            
+            const leftSection = this.createFlexContainer('row', '8px', {
+                alignItems: 'center',
+                flex: '1'
             });
             
             const enabledCheckbox = document.createElement('input');
@@ -377,9 +383,43 @@
             description.textContent = rule.description || `Rule ${index + 1}`;
             description.style.cssText = `
                 font-weight: 400;
-                flex: 1;
                 font-family: ${this.FONTS.primary};
+                margin-right: 12px;
             `;
+            
+            // Mode dropdown (ask/off/auto)
+            const modeDropdown = document.createElement('select');
+            modeDropdown.style.cssText = `
+                padding: 2px 6px;
+                border-radius: 4px;
+                border: 1px solid ${this.COLORS.border};
+                background: white;
+                font-size: 11px;
+                font-family: ${this.FONTS.primary};
+                cursor: pointer;
+            `;
+            
+            const modes = [
+                { value: 'auto', label: 'Auto' },
+                { value: 'ask', label: 'Ask' },
+                { value: 'off', label: 'Off' }
+            ];
+            
+            modes.forEach(mode => {
+                const option = document.createElement('option');
+                option.value = mode.value;
+                option.textContent = mode.label;
+                if (rule.askMode === mode.value || (mode.value === 'auto' && !rule.askMode)) {
+                    option.selected = true;
+                }
+                modeDropdown.appendChild(option);
+            });
+            
+            modeDropdown.addEventListener('change', () => {
+                if (onModeChange) {
+                    onModeChange(index, modeDropdown.value);
+                }
+            });
             
             const deleteBtn = this.createButton('Delete', (e) => {
                 e.preventDefault();
@@ -392,8 +432,11 @@
             // Apply consistent red styling to match delete group button
             this.styleButtonWithHover(deleteBtn, 'danger');
             
-            header.appendChild(enabledCheckbox);
-            header.appendChild(description);
+            leftSection.appendChild(enabledCheckbox);
+            leftSection.appendChild(description);
+            leftSection.appendChild(modeDropdown);
+            
+            header.appendChild(leftSection);
             header.appendChild(deleteBtn);
             ruleDiv.appendChild(header);
             
@@ -1563,6 +1606,36 @@
             <span style="font-size: 11px; color: #999;">${autoFixSettings.ungroupedRules.length} rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}</span>
         `;
 
+        // Delete all unsorted rules button
+        const deleteAllBtn = createSmallButton('Delete All', () => {
+            if (confirm(`Are you sure you want to delete all ${autoFixSettings.ungroupedRules.length} unsorted rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}?`)) {
+                autoFixSettings.ungroupedRules = [];
+                saveSettings();
+                refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+            }
+        });
+        
+        // Set base styles for delete button with absolute positioning
+        deleteAllBtn.style.backgroundColor = '#dc3545';
+        deleteAllBtn.style.color = 'white';
+        deleteAllBtn.style.borderColor = '#dc3545';
+        deleteAllBtn.style.fontSize = '10px';
+        deleteAllBtn.style.padding = '2px 6px';
+        deleteAllBtn.style.position = 'absolute';
+        deleteAllBtn.style.top = '8px';
+        deleteAllBtn.style.right = '8px';
+        deleteAllBtn.style.zIndex = '10';
+        
+        // Add proper hover effect using the UI utility
+        UI.addHoverEffect(deleteAllBtn, {
+            backgroundColor: '#c82333',
+            borderColor: '#bd2130'
+        }, {
+            backgroundColor: '#dc3545',
+            color: 'white',
+            borderColor: '#dc3545'
+        });
+
         const toggleIcon = document.createElement('span');
         toggleIcon.innerHTML = '▼';
         toggleIcon.style.cssText = `
@@ -1575,6 +1648,7 @@
         ungroupedInfo.appendChild(ungroupedMeta);
         ungroupedHeader.appendChild(ungroupedInfo);
         ungroupedHeader.appendChild(toggleIcon);
+        ungroupedHeader.appendChild(deleteAllBtn);
 
         // Rules container (initially hidden)
         const rulesContainer = document.createElement('div');
@@ -1585,7 +1659,13 @@
 
         // Toggle functionality
         let isExpanded = false;
-        ungroupedHeader.addEventListener('click', () => {
+        
+        const toggleHandler = (e) => {
+            // Don't toggle if the delete all button was clicked
+            if (e.target === deleteAllBtn || deleteAllBtn.contains(e.target)) {
+                return;
+            }
+            
             isExpanded = !isExpanded;
             if (isExpanded) {
                 rulesContainer.style.display = 'block';
@@ -1602,7 +1682,9 @@
                 rulesContainer.style.display = 'none';
                 toggleIcon.style.transform = 'rotate(0deg)';
             }
-        });
+        };
+        
+        ungroupedHeader.addEventListener('click', toggleHandler);
 
         ungroupedContainer.appendChild(ungroupedHeader);
         ungroupedContainer.appendChild(rulesContainer);
@@ -1648,6 +1730,11 @@
                     emptyMsg.style.cssText = 'padding: 12px; color: #999; font-style: italic; text-align: center;';
                     rulesContainer.appendChild(emptyMsg);
                 }
+            },
+            // onModeChange
+            (idx, mode) => {
+                autoFixSettings.ruleGroups[groupIndex].rules[idx].askMode = mode;
+                saveSettings();
             }
         );
 
@@ -1714,6 +1801,11 @@
                 
                 // Refresh the entire container to properly update UI
                 refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+            },
+            // onModeChange
+            (idx, mode) => {
+                autoFixSettings.ungroupedRules[idx].askMode = mode;
+                saveSettings();
             }
         );
 
@@ -2067,6 +2159,11 @@
                 autoFixSettings.customRegexRules.splice(idx, 1);
                 saveSettings();
                 refreshCustomRegexRules(document.getElementById('custom-regex-rules-container'));
+            },
+            // onModeChange
+            (idx, mode) => {
+                autoFixSettings.customRegexRules[idx].askMode = mode;
+                saveSettings();
             }
         );
     }
@@ -2170,6 +2267,19 @@
         try {
             const importedData = JSON.parse(dataString);
             let importedRules = [];
+            let hasGroupStructure = false;
+            
+            // Helper function to restore functions from strings
+            const restoreFunction = (rule) => {
+                if (typeof rule.replace === 'string' && rule.replace.startsWith('function')) {
+                    try {
+                        rule.replace = eval(`(${rule.replace})`);
+                    } catch (e) {
+                        console.warn('Failed to restore function for rule:', rule.description || rule.find);
+                    }
+                }
+                return rule;
+            };
             
             // Handle different import formats with backwards compatibility
             if (Array.isArray(importedData)) {
@@ -2183,27 +2293,72 @@
                     // New format with metadata wrapper (like rules.json)
                     importedRules = importedData.rules;
                 } else if (importedData.ruleGroups || importedData.ungroupedRules) {
-                    // New export format with rule groups
-                    importedRules = [];
+                    // New export format with rule groups - preserve structure
+                    hasGroupStructure = true;
+                    let totalImported = 0;
                     
-                    // Extract rules from rule groups
+                    // Import rule groups and preserve their structure
                     if (importedData.ruleGroups && Array.isArray(importedData.ruleGroups)) {
+                        if (!autoFixSettings.ruleGroups) {
+                            autoFixSettings.ruleGroups = [];
+                        }
+                        
                         importedData.ruleGroups.forEach(group => {
                             if (group.rules && Array.isArray(group.rules)) {
-                                importedRules = [...importedRules, ...group.rules];
+                                // Validate and restore functions for rules in this group
+                                const validGroupRules = group.rules
+                                    .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
+                                    .map(restoreFunction);
+                                
+                                if (validGroupRules.length > 0) {
+                                    // Add the group with its validated rules
+                                    autoFixSettings.ruleGroups.push({
+                                        name: group.name || 'Imported Group',
+                                        rules: validGroupRules
+                                    });
+                                    totalImported += validGroupRules.length;
+                                }
                             }
                         });
                     }
                     
-                    // Extract ungrouped rules
+                    // Import ungrouped rules
                     if (importedData.ungroupedRules && Array.isArray(importedData.ungroupedRules)) {
-                        importedRules = [...importedRules, ...importedData.ungroupedRules];
+                        if (!autoFixSettings.ungroupedRules) {
+                            autoFixSettings.ungroupedRules = [];
+                        }
+                        
+                        const validUngroupedRules = importedData.ungroupedRules
+                            .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
+                            .map(restoreFunction);
+                        
+                        autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validUngroupedRules];
+                        totalImported += validUngroupedRules.length;
                     }
                     
-                    // Extract legacy rules
+                    // Import legacy rules
                     if (importedData.legacyRules && Array.isArray(importedData.legacyRules)) {
-                        importedRules = [...importedRules, ...importedData.legacyRules];
+                        if (!autoFixSettings.ungroupedRules) {
+                            autoFixSettings.ungroupedRules = [];
+                        }
+                        
+                        const validLegacyRules = importedData.legacyRules
+                            .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
+                            .map(restoreFunction);
+                        
+                        autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validLegacyRules];
+                        totalImported += validLegacyRules.length;
                     }
+                    
+                    if (totalImported === 0) {
+                        alert('No valid regex rules found in the data.');
+                        return;
+                    }
+                    
+                    saveSettings();
+                    refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+                    alert(`Successfully imported ${totalImported} regex rule(s) from ${source}.`);
+                    return;
                 } else {
                     alert(`Invalid format. Please ${source === 'file' ? 'select a valid JSON file' : 'copy valid JSON data'} containing regex rules.`);
                     return;
@@ -2213,10 +2368,11 @@
                 return;
             }
             
-            // Validate each rule has required fields
-            const validRules = importedRules.filter(rule => 
-                rule && typeof rule === 'object' && rule.find && rule.replace
-            );
+            // For non-grouped imports (simple arrays, single rules, rules.json format)
+            // Validate each rule has required fields and restore functions
+            const validRules = importedRules
+                .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
+                .map(restoreFunction);
             
             if (validRules.length === 0) {
                 alert('No valid regex rules found in the data.');
@@ -2735,6 +2891,11 @@
                 if (searchInput) {
                     searchInput.dispatchEvent(new Event('input'));
                 }
+            },
+            // onModeChange
+            (idx, mode) => {
+                autoFixSettings.customRegexRules[idx].askMode = mode;
+                saveSettings();
             },
             true // isSearchResult flag
         );
@@ -3433,6 +3594,15 @@
     function detectEditorContext(element) {
         if (!element || !element.closest) return null;
 
+        // Exclude search forms and inputs
+        const searchForm = element.closest('form[action*="/search"]');
+        if (searchForm) return null;
+        
+        const inputName = element.getAttribute && element.getAttribute('name');
+        if (inputName === 'q' || inputName === 'query' || inputName === 'search') {
+            return null;
+        }
+
         const stringCandidates = [
             element.className || '',
             element.getAttribute && element.getAttribute('aria-label') || '',
@@ -3440,6 +3610,13 @@
             element.getAttribute && element.getAttribute('name') || '',
             element.getAttribute && element.getAttribute('data-testid') || ''
         ].join(' ').toLowerCase();
+
+        // Additional check for search-related placeholders/classes
+        if (stringCandidates.includes('search lyrics') || 
+            stringCandidates.includes('search for') ||
+            (stringCandidates.includes('search') && !stringCandidates.includes('editor'))) {
+            return null;
+        }
 
         const lyricsContainer = element.closest('[class*="LyricsEdit"]');
         if (lyricsContainer) {
@@ -3606,7 +3783,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 10003;
+            z-index: 100;
             backdrop-filter: blur(2px);
         `;
 
@@ -5190,7 +5367,7 @@
             backdrop-filter: blur(8px);
             border-radius: 8px;
             padding: 12px 16px;
-            z-index: 10003;
+            z-index: 2;
             font-family: 'Programme', Arial, sans-serif;
             min-width: 200px;
             max-width: 320px;
@@ -6080,8 +6257,21 @@
                     range.setStart(targetNode, Math.min(targetOffset, targetNode.textContent.length));
                     range.setEnd(targetNode, Math.min(targetOffset, targetNode.textContent.length));
                     
-                    // Scroll the range into view
-                    range.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+                    // Create a temporary span to get the exact position
+                    const span = document.createElement('span');
+                    span.textContent = '\u200B'; // Zero-width space
+                    range.insertNode(span);
+                    
+                    // Scroll the span into view
+                    span.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+                    
+                    // Remove the span
+                    span.parentNode.removeChild(span);
+                    
+                    // Normalize the text node after removing the span
+                    if (targetNode.parentNode) {
+                        targetNode.parentNode.normalize();
+                    }
                     
                     // Set selection to the range
                     const selection = window.getSelection();
@@ -6089,11 +6279,12 @@
                     selection.addRange(range);
                 } catch (e) {
                     console.log('Range scrolling failed, using fallback:', e);
-                    textEditor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Use instant scroll
+                    textEditor.scrollIntoView({ behavior: 'auto', block: 'center' });
                 }
             } else {
-                // Fallback: scroll the editor into view
-                textEditor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Fallback: scroll the editor into view with instant scroll
+                textEditor.scrollIntoView({ behavior: 'auto', block: 'center' });
             }
         }
     }
@@ -6312,6 +6503,83 @@
         }
     }
     
+    function positionPopupNearHighlight(popup, textEditor, match) {
+        const updatePosition = () => {
+            // Find the highlight element
+            const highlightSpan = textEditor.querySelector ? 
+                textEditor.querySelector('span[style*="background-color: rgba(255, 235, 59"]') : null;
+            
+            let targetRect = null;
+            
+            if (highlightSpan) {
+                // Use the highlighted span's position
+                targetRect = highlightSpan.getBoundingClientRect();
+            } else if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+                // For textarea, approximate position based on cursor
+                const textEditorRect = textEditor.getBoundingClientRect();
+                const styles = window.getComputedStyle(textEditor);
+                const lineHeight = parseInt(styles.lineHeight) || parseInt(styles.fontSize) * 1.2 || 20;
+                
+                // Get text up to match position
+                const textUpToMatch = textEditor.value.slice(0, match.position);
+                const lines = textUpToMatch.split('\n');
+                const currentLine = lines.length - 1;
+                
+                // Calculate approximate position
+                targetRect = {
+                    left: textEditorRect.left + 10,
+                    right: textEditorRect.right - 10,
+                    top: textEditorRect.top + (currentLine * lineHeight) - textEditor.scrollTop + 10,
+                    bottom: textEditorRect.top + ((currentLine + 1) * lineHeight) - textEditor.scrollTop + 10,
+                    width: textEditorRect.width - 20,
+                    height: lineHeight
+                };
+            } else {
+                // Fallback to editor position
+                targetRect = textEditor.getBoundingClientRect();
+            }
+            
+            if (targetRect) {
+                popup.style.position = 'fixed';
+                
+                // Calculate position - try to place below the highlight
+                let top = targetRect.bottom + 10;
+                let left = targetRect.left;
+                
+                // Check if popup would go off-screen at the bottom
+                const popupHeight = popup.offsetHeight || 150; // estimated height
+                if (top + popupHeight > window.innerHeight) {
+                    // Place above instead
+                    top = targetRect.top - popupHeight - 10;
+                }
+                
+                // Check if popup would go off-screen on the right
+                const popupWidth = popup.offsetWidth || 320;
+                if (left + popupWidth > window.innerWidth) {
+                    left = window.innerWidth - popupWidth - 10;
+                }
+                
+                // Ensure it's not off-screen on the left
+                left = Math.max(10, left);
+                // Ensure it's not off-screen at the top
+                top = Math.max(10, top);
+                
+                popup.style.left = left + 'px';
+                popup.style.top = top + 'px';
+                popup.style.maxWidth = Math.min(320, window.innerWidth - 20) + 'px';
+            } else {
+                // Final fallback - center on screen
+                popup.style.position = 'fixed';
+                popup.style.left = '50%';
+                popup.style.top = '50%';
+                popup.style.transform = 'translate(-50%, -50%)';
+                popup.style.maxWidth = '320px';
+            }
+        };
+
+        return updatePosition;
+    }
+    
     function positionPopupBelowFormatSection(popup) {
         const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
                                  document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
@@ -6322,13 +6590,13 @@
         // Look for the find/replace container first
         const findReplaceContainer = document.getElementById('genius-find-replace-container');
         
-        // Fallback to format explainer if find/replace container not found
-        const formatExplainer = controlsContainer && (controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
-                                   controlsContainer.querySelector('[class*="Explainer"]') ||
-                                   controlsContainer.querySelector('*:last-child'));
+        // Look for lyricsSectionsButtonsContainer or LyricsEditExplainer
+        const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
+        const lyricsExplainer = controlsContainer && (controlsContainer.querySelector('[class*="LyricsEditExplainer__Container"]') ||
+                                   controlsContainer.querySelector('[class*="LyricsEditExplainer"]'));
 
         const updatePosition = () => {
-            // First try to position below find/replace container
+            // Position below find/replace but above lyricsSectionsContainer or LyricsEditExplainer
             if (findReplaceContainer) {
                 const findReplaceRect = findReplaceContainer.getBoundingClientRect();
                 const controlsRect = controlsContainer ? controlsContainer.getBoundingClientRect() : findReplaceRect;
@@ -6337,13 +6605,22 @@
                 popup.style.top = (findReplaceRect.bottom + 10) + 'px';
                 popup.style.maxWidth = (controlsRect.width - 20) + 'px';
             }
-            // Fallback to original behavior
-            else if (controlsContainer && formatExplainer) {
-                const explainerRect = formatExplainer.getBoundingClientRect();
+            // Try positioning above lyricsSectionsContainer
+            else if (lyricsSectionsContainer && controlsContainer) {
+                const sectionsRect = lyricsSectionsContainer.getBoundingClientRect();
                 const containerRect = controlsContainer.getBoundingClientRect();
                 popup.style.position = 'fixed';
                 popup.style.left = containerRect.left + 'px';
-                popup.style.top = (explainerRect.bottom + 10) + 'px';
+                popup.style.top = (sectionsRect.top - 100) + 'px'; // Position above it
+                popup.style.maxWidth = (containerRect.width - 20) + 'px';
+            }
+            // Try positioning above LyricsEditExplainer
+            else if (lyricsExplainer && controlsContainer) {
+                const explainerRect = lyricsExplainer.getBoundingClientRect();
+                const containerRect = controlsContainer.getBoundingClientRect();
+                popup.style.position = 'fixed';
+                popup.style.left = containerRect.left + 'px';
+                popup.style.top = (explainerRect.top - 100) + 'px'; // Position above it
                 popup.style.maxWidth = (containerRect.width - 20) + 'px';
             } 
             // Final fallback
@@ -6950,9 +7227,10 @@
         // Capitalize first letter inside parentheses
         if (autoFixSettings.capitalizeParentheses) {
             console.log('Capitalizing first letter in parentheses...');
-            // Pattern: ( followed by optional whitespace and a lowercase letter
-            fixedText = fixedText.replace(/\(\s*([a-z])/g, function(match, firstChar) {
-                return match.replace(firstChar, firstChar.toUpperCase());
+            // Pattern: ( followed by a lowercase letter (no spaces allowed)
+            // This ensures we only capitalize directly after ( and not after quotes or spaces
+            fixedText = fixedText.replace(/\(([a-z])/g, function(match, firstChar) {
+                return '(' + firstChar.toUpperCase();
             });
         }
 
@@ -7026,10 +7304,17 @@
                             contextLabel
                         };
 
-                        if (rule.ask) {
+                        // Determine the mode: check askMode first, fall back to ask property for backwards compatibility
+                        const mode = rule.askMode || (rule.ask ? 'ask' : 'auto');
+                        
+                        if (mode === 'off') {
+                            // Skip this rule
+                            console.log(`Rule "${rule.description}" from ${contextLabel} is disabled (mode: off)`);
+                        } else if (mode === 'ask') {
                             pendingInteractiveRules.push(processedRule);
                             console.log(`Interactive rule "${rule.description}" from ${contextLabel} queued for review`);
                         } else {
+                            // mode === 'auto' or default
                             const regex = new RegExp(processedFind, processedFlags);
                             const beforeLength = fixedText.length;
 
@@ -7300,7 +7585,7 @@
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             padding: 8px;
             display: none;
-            z-index: 10001;
+            z-index: 2;
             font-family: 'HelveticaNeue', Arial, sans-serif;
             gap: 8px;
         `;
@@ -7803,26 +8088,15 @@
             console.log('Not on a lyrics page, skipping button addition');
             return false;
         }
-        // Remove any existing buttons first
+        // Check if buttons already exist - if so, don't add them again
         const existingToggleButton = document.getElementById('genius-emdash-toggle');
         const existingAutoFixButton = document.getElementById('genius-autofix-button');
         const existingZwsButton = document.getElementById('genius-zws-button');
         const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
-        if (existingToggleButton) {
-            existingToggleButton.remove();
-            console.log('Removed existing em dash button');
-        }
-        if (existingAutoFixButton) {
-            existingAutoFixButton.remove();
-            console.log('Removed existing auto fix button');
-        }
-        if (existingZwsButton) {
-            existingZwsButton.remove();
-            console.log('Removed existing zero-width space button');
-        }
-        if (existingFindReplaceContainer) {
-            existingFindReplaceContainer.remove();
-            console.log('Removed existing find replace container');
+        
+        if (existingToggleButton || existingAutoFixButton || existingZwsButton || existingFindReplaceContainer) {
+            console.log('Buttons already exist, skipping addition');
+            return false;
         }
 
         // Look for the lyrics editor controls container (try multiple approaches)
@@ -7875,19 +8149,13 @@
                                        controlsContainer.querySelector('[class*="Explainer"]');
                 
                 if (lyricsSectionsContainer) {
-                    // If other extension's buttons exist, insert our buttons after them
-                    console.log('Found other extension lyrics sections container, positioning our buttons below it');
+                    // If other extension's buttons exist, insert our buttons BEFORE them
+                    console.log('Found other extension lyrics sections container, positioning our buttons above it');
                     
-                    // Create a wrapper for our buttons with proper styling
-                    const scribeToolsWrapper = document.createElement('div');
-                    scribeToolsWrapper.id = 'scribe-tools-wrapper';
-                    scribeToolsWrapper.style.marginTop = '1rem';
-                    scribeToolsWrapper.appendChild(mainButtonContainer);
-                    scribeToolsWrapper.appendChild(smallButtonsContainer);
-                    
-                    // Insert after the other extension's container
-                    lyricsSectionsContainer.parentNode.insertBefore(scribeToolsWrapper, lyricsSectionsContainer.nextSibling);
-                    console.log('Inserted ScribeTools buttons after other extension buttons');
+                    // Insert before the other extension's container
+                    lyricsSectionsContainer.parentNode.insertBefore(mainButtonContainer, lyricsSectionsContainer);
+                    lyricsSectionsContainer.parentNode.insertBefore(smallButtonsContainer, lyricsSectionsContainer);
+                    console.log('Inserted ScribeTools buttons before other extension buttons');
                     
                 } else if (lyricsExplainer && controlsContainer.contains(lyricsExplainer)) {
                     // Insert before the LyricsEditExplainer (only if it's a child of controlsContainer)
@@ -8032,11 +8300,15 @@
                                 });
                             } else {
                                 console.log('Auto-saved content matches current content, clearing auto-save...');
+                                restorePromptShownForContext.add(context.key);
                                 clearAutoSave(context.key);
                             }
                         } else {
                             clearAutoSave(context.key);
                         }
+                    } else {
+                        // No autosave found, mark as checked to prevent future checks
+                        restorePromptShownForContext.add(context.key);
                     }
                 } catch (err) {
                     console.log('Failed to check auto-save:', err);
@@ -8143,15 +8415,17 @@
                     if (targetContainer.style.flexBasis) {
                         targetContainer.style.flexBasis = 'auto';
                     }
-                    // Remove any existing buttons
+                    // Clean up any orphaned buttons (shouldn't happen with new check, but just in case)
                     const existingToggle = document.getElementById('genius-emdash-toggle');
                     const existingAutoFix = document.getElementById('genius-autofix-button');
                     const existingZws = document.getElementById('genius-zws-button');
                     const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
-                    if (existingToggle) existingToggle.remove();
-                    if (existingAutoFix) existingAutoFix.remove();
-                    if (existingZws) existingZws.remove();
-                    if (existingFindReplaceContainer) existingFindReplaceContainer.remove();
+                    
+                    // Only remove if they exist but their parent containers are missing
+                    if (existingToggle && !existingToggle.parentNode) existingToggle.remove();
+                    if (existingAutoFix && !existingAutoFix.parentNode) existingAutoFix.remove();
+                    if (existingZws && !existingZws.parentNode) existingZws.remove();
+                    if (existingFindReplaceContainer && !existingFindReplaceContainer.parentNode) existingFindReplaceContainer.remove();
                     
                     // Create all buttons
                     toggleButton = createToggleButton();

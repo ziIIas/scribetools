@@ -293,12 +293,12 @@
       "enabled": true
     },
     {
-      "description": "Drake -> Drac' (ask)",
+      "description": "Drake -> Drac'",
       "find": "\\bdrake\\b",
       "replace": "Drac'",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "Dracey -> Dracy",
@@ -306,7 +306,7 @@
       "replace": "Dracy",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "micro Draco -> Micro Draco",
@@ -337,12 +337,12 @@
       "enabled": true
     },
     {
-      "description": "Mac -> MAC (ask)",
+      "description": "Mac -> MAC",
       "find": "\\bmac\\b",
       "replace": "MAC",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "MAC10/Mac10/mac10 -> MAC-10",
@@ -436,12 +436,12 @@
       "enabled": true
     },
     {
-      "description": "thirty-eight -> .38 (ask)",
+      "description": "thirty-eight -> .38",
       "find": "\\bthirty-eight\\b",
       "replace": ".38",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "mag' -> mag",
@@ -556,12 +556,12 @@
       "enabled": true
     },
     {
-      "description": "Perk -> Perc' (ask)",
+      "description": "Perk -> Perc'",
       "find": "\\bperk\\b",
       "replace": "Perc'",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "yerk -> yerc",
@@ -620,12 +620,12 @@
       "enabled": true
     },
     {
-      "description": "Molly -> molly (ask)",
+      "description": "Molly -> molly",
       "find": "\\bmolly\\b",
       "replace": "molly",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "fetti -> fetty",
@@ -747,12 +747,12 @@
       "enabled": true
     },
     {
-      "description": "brah -> brrah (ask)",
+      "description": "brah -> brrah",
       "find": "\\bbrah\\b",
       "replace": "brrah",
       "flags": "gi",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "slat -> slatt",
@@ -784,11 +784,11 @@
     },
     {
       "description": "Beginning of line capitalization",
-      "find": "((?:^|[\"(])(?:<[bi]>|['\"])*)\\s*([a-z])",
-      "replace": "function(match, prefix, letter) { return prefix + letter.toUpperCase(); }",
+      "find": "^([^a-zA-Z\\n]*?)(<[^>]+>)?([a-z])",
+      "replace": "function(match, prefix, htmlTag, letter) { if (/\\d\\s*$/.test(prefix)) { return match; } return prefix + (htmlTag || '') + letter.toUpperCase(); }",
       "flags": "gm",
       "enabled": true,
-      "ask": true
+      "askMode": "ask"
     },
     {
       "description": "Proper noun capitalization",
