@@ -6316,67 +6316,155 @@
             textEditor._originalSelectionStart = textEditor.selectionStart;
             textEditor._originalSelectionEnd = textEditor.selectionEnd;
 
-            const startPos = match.position;
-            const endPos = match.position + match.original.length;
-
-            textEditor.focus();
-
-            // Create highlight overlay
-            const parent = textEditor.parentElement;
-            if (parent && (parent.style.position === '' || parent.style.position === 'static')) {
-                parent.style.position = 'relative';
-            }
-
-            const overlay = document.createElement('div');
-            overlay.dataset.interactiveHighlightOverlay = 'true';
             const styles = window.getComputedStyle(textEditor);
-            overlay.style.position = 'absolute';
-            overlay.style.left = textEditor.offsetLeft + 'px';
-            overlay.style.top = textEditor.offsetTop + 'px';
-            overlay.style.width = textEditor.offsetWidth + 'px';
-            overlay.style.height = textEditor.offsetHeight + 'px';
-            overlay.style.pointerEvents = 'none';
-            overlay.style.whiteSpace = 'pre-wrap';
-            overlay.style.overflow = 'hidden';
-            overlay.style.font = styles.font;
-            overlay.style.lineHeight = styles.lineHeight;
-            overlay.style.padding = styles.padding;
-            overlay.style.boxSizing = 'border-box';
-            overlay.style.color = styles.color;
-            overlay.style.background = 'transparent';
-            overlay.style.border = styles.border;
-            overlay.style.borderRadius = styles.borderRadius;
-            overlay.style.margin = styles.margin;
+            const parent = textEditor.parentElement;
+            if (!parent) {
+                console.warn('Unable to highlight match — textarea has no parent element.');
+                return;
+            }
 
             const escapeHTML = (str) => str
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
 
-            const before = escapeHTML(textEditor.value.slice(0, startPos));
-            const numberText = escapeHTML(textEditor.value.slice(startPos, endPos));
-            const after = escapeHTML(textEditor.value.slice(endPos));
-            overlay.innerHTML = `${before}<span data-interactive-highlight="true" style="background:#ff5252;color:white">${numberText}</span>${after}`;
-
-            parent.appendChild(overlay);
-
-            // Keep overlay in sync with textarea scroll
-            const syncOverlay = () => {
-                overlay.scrollTop = textEditor.scrollTop;
-                overlay.scrollLeft = textEditor.scrollLeft;
+            const safeColor = (value) => {
+                if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)') {
+                    return '#111';
+                }
+                return value;
             };
-            textEditor.addEventListener('scroll', syncOverlay);
-            syncOverlay();
+
+            const safeBackground = (value) => {
+                if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)') {
+                    return '#fff';
+                }
+                return value;
+            };
+
+            const startPos = Math.max(0, Math.min(match.position, textEditor.value.length));
+            const endPos = Math.max(startPos, Math.min(match.position + match.original.length, textEditor.value.length));
+
+            textEditor.focus();
+
+            const parentOriginalPosition = parent.style.position;
+            let parentPositionModified = false;
+            if (!parent.style.position || parent.style.position === 'static') {
+                const computedParentPosition = window.getComputedStyle(parent).position;
+                if (computedParentPosition === 'static') {
+                    parent.style.position = 'relative';
+                    parentPositionModified = true;
+                }
+            }
+
+            const overlay = document.createElement('div');
+            overlay.dataset.interactiveHighlightOverlay = 'true';
+            overlay.style.position = 'absolute';
+            overlay.style.left = textEditor.offsetLeft + 'px';
+            overlay.style.top = textEditor.offsetTop + 'px';
+            overlay.style.width = textEditor.offsetWidth + 'px';
+            overlay.style.height = textEditor.offsetHeight + 'px';
+            overlay.style.pointerEvents = 'none';
+            overlay.style.overflow = 'hidden';
+            overlay.style.boxSizing = 'border-box';
+            overlay.style.borderRadius = styles.borderRadius;
+            overlay.style.border = styles.border && styles.border !== '0px none rgb(0, 0, 0)' ? styles.border : '1px solid transparent';
+            overlay.style.boxShadow = styles.boxShadow && styles.boxShadow !== 'none' ? styles.boxShadow : 'none';
+            overlay.style.backgroundColor = safeBackground(styles.backgroundColor);
+            overlay.style.zIndex = String((parseInt(styles.zIndex, 10) || 0) + 5);
+
+            const overlayContent = document.createElement('div');
+            overlayContent.dataset.interactiveHighlightContent = 'true';
+            overlayContent.style.position = 'absolute';
+            overlayContent.style.top = '0';
+            overlayContent.style.left = '0';
+            overlayContent.style.paddingTop = styles.paddingTop;
+            overlayContent.style.paddingRight = styles.paddingRight;
+            overlayContent.style.paddingBottom = styles.paddingBottom;
+            overlayContent.style.paddingLeft = styles.paddingLeft;
+            overlayContent.style.whiteSpace = 'pre-wrap';
+            overlayContent.style.wordBreak = 'break-word';
+            overlayContent.style.font = styles.font;
+            overlayContent.style.lineHeight = styles.lineHeight;
+            overlayContent.style.letterSpacing = styles.letterSpacing;
+            overlayContent.style.color = safeColor(styles.color);
+
+            const buildOverlayHTML = () => {
+                const value = textEditor.value || '';
+                const before = escapeHTML(value.slice(0, startPos));
+                const highlightedText = escapeHTML(value.slice(startPos, endPos));
+                const after = escapeHTML(value.slice(endPos));
+                const html = `${before}<span data-interactive-highlight="true" style="background-color: #ff5252; color: #fff; padding: 1px 2px; border-radius: 2px;">${highlightedText || '&ZeroWidthSpace;'}</span>${after}`;
+                return html.replace(/\n/g, '<br>');
+            };
+
+            overlayContent.innerHTML = buildOverlayHTML();
+            overlay.appendChild(overlayContent);
+
+            if (textEditor.nextSibling) {
+                parent.insertBefore(overlay, textEditor.nextSibling);
+            } else {
+                parent.appendChild(overlay);
+            }
+
+            const syncScroll = () => {
+                overlayContent.style.transform = `translate(${-textEditor.scrollLeft}px, ${-textEditor.scrollTop}px)`;
+            };
+
+            const syncGeometry = () => {
+                overlay.style.width = textEditor.offsetWidth + 'px';
+                overlay.style.height = textEditor.offsetHeight + 'px';
+                overlay.style.left = textEditor.offsetLeft + 'px';
+                overlay.style.top = textEditor.offsetTop + 'px';
+            };
+
+            const syncContent = () => {
+                overlayContent.innerHTML = buildOverlayHTML();
+                syncScroll();
+            };
+
+            textEditor.addEventListener('scroll', syncScroll);
+            textEditor.addEventListener('input', syncContent);
+
+            const resizeObserver = window.ResizeObserver ? new ResizeObserver(() => {
+                syncGeometry();
+                syncScroll();
+            }) : null;
+
+            if (resizeObserver) {
+                resizeObserver.observe(textEditor);
+            }
+
+            const repositionHandler = () => {
+                syncGeometry();
+                syncScroll();
+            };
+
+            window.addEventListener('resize', repositionHandler);
+            window.addEventListener('scroll', repositionHandler, true);
+
+            syncGeometry();
+            syncScroll();
 
             textEditor._highlightOverlay = overlay;
-            textEditor._overlayScrollHandler = syncOverlay;
+            textEditor._overlayScrollHandler = syncScroll;
+            textEditor._overlayInputHandler = syncContent;
+            textEditor._overlayRepositionHandler = repositionHandler;
+            textEditor._overlayResizeObserver = resizeObserver;
+            textEditor._highlightInfo = {
+                overlay,
+                overlayContent,
+                parent,
+                parentOriginalPosition,
+                parentPositionModified
+            };
+
             textEditor.classList.add('genius-highlighting-active');
-            
+
             // Make the original text transparent so only the overlay is visible
             textEditor.style.color = 'transparent';
-            textEditor.style.caretColor = '#000'; // Keep cursor visible
-            
-            textEditor._highlightInfo = { overlay, handler: syncOverlay };
+            const caretColor = safeColor(styles.caretColor === 'auto' ? styles.color : styles.caretColor);
+            textEditor.style.caretColor = caretColor;
 
         } else if (textEditor.isContentEditable) {
             // For contenteditable, wrap the match in a red span
@@ -6442,6 +6530,26 @@
                 delete textEditor._overlayScrollHandler;
             }
 
+            if (textEditor._overlayInputHandler) {
+                textEditor.removeEventListener('input', textEditor._overlayInputHandler);
+                delete textEditor._overlayInputHandler;
+            }
+
+            if (textEditor._overlayRepositionHandler) {
+                window.removeEventListener('resize', textEditor._overlayRepositionHandler);
+                window.removeEventListener('scroll', textEditor._overlayRepositionHandler, true);
+                delete textEditor._overlayRepositionHandler;
+            }
+
+            if (textEditor._overlayResizeObserver) {
+                try {
+                    textEditor._overlayResizeObserver.disconnect();
+                } catch (observerError) {
+                    console.warn('Failed to disconnect resize observer:', observerError);
+                }
+                delete textEditor._overlayResizeObserver;
+            }
+
             if (textEditor._highlightOverlay) {
                 console.log('Removing specific textarea overlay');
                 textEditor._highlightOverlay.remove();
@@ -6459,9 +6567,13 @@
             }
 
             if (textEditor._highlightInfo) {
+                const { parent, parentOriginalPosition, parentPositionModified } = textEditor._highlightInfo;
+                if (parent && parentPositionModified) {
+                    parent.style.position = parentOriginalPosition || '';
+                }
                 delete textEditor._highlightInfo;
             }
-            
+
         } else if (textEditor.isContentEditable) {
             // Restore original content
             if (textEditor._originalHTML !== undefined) {
