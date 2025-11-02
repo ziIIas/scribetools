@@ -784,8 +784,8 @@
     },
     {
       "description": "Beginning of line capitalization",
-      "find": "^([^a-zA-Z\\n]*?)(<[^>]+>)?([a-z])",
-      "replace": "function(match, prefix, htmlTag, letter) { if (/\\d\\s*$/.test(prefix)) { return match; } return prefix + (htmlTag || '') + letter.toUpperCase(); }",
+      "find": "^((?:<[^>]+>|[^a-zA-Z<\\n])*)([a-z])",
+      "replace": "function(match, prefix, letter) { if (/\\d\\s*$/.test(prefix)) { return match; } return prefix + letter.toUpperCase(); }",
       "flags": "gm",
       "enabled": true,
       "askMode": "ask"
