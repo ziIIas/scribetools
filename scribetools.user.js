@@ -55,7 +55,8 @@
         ruleGroups: [], // Array of {id: string, title: string, description: string, author: string, version: string, rules: array}
         ungroupedRules: [], // Rules not assigned to any group
         persistentAutoSave: false,
-        groupFixesByRule: false // Group autofix prompts by rule instead of one at a time
+        groupFixesByRule: false, // Group autofix prompts by rule instead of one at a time
+        useCustomEditor: false // Enable custom lyrics editor overlay with enhanced styling
     };
 
     // Autoscribe settings
@@ -940,6 +941,7 @@
                   { value: 'on', label: 'Convert automatically' }
               ]
             },
+            { key: 'useCustomEditor', label: 'Enable custom lyrics editor overlay (beta)', type: 'checkbox' },
             { key: 'groupFixesByRule', label: 'Group autofix prompts by rule (show all fixes at once)', type: 'checkbox' }
         ];
 
@@ -1024,6 +1026,9 @@
                 checkbox.addEventListener('change', function() {
                     autoFixSettings[setting.key] = this.checked;
                     saveSettings();
+                    if (setting.key === 'useCustomEditor') {
+                        applyCustomEditorSetting();
+                    }
                 });
 
                 const label = document.createElement('label');
@@ -8402,6 +8407,347 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         return textNodes;
     }
+    function isLyricsEditorTextarea(element) {
+        return !!(element && element.tagName === 'TEXTAREA' && element.closest && element.closest('[class*"LyricsEdit"], .LyricsEdit-desktop__Editor'));
+    }
+
+    function escapeHtmlForCustomEditor(str) {
+        if (typeof str !== 'string') {
+            return '';
+        }
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function computeCustomHighlightRanges(textEditor, text) {
+        if (!textEditor || !textEditor._highlightState || !Array.isArray(textEditor._highlightState.matches)) {
+            return [];
+        }
+
+        const { matches = [], currentMatchIndex = 0, mode = 'sequential' } = textEditor._highlightState;
+        const ranges = [];
+        let cursor = 0;
+
+        matches.forEach((highlightMatch, idx) => {
+            if (!highlightMatch || !highlightMatch.original) {
+                return;
+            }
+
+            const source = text || '';
+            let foundIndex = source.indexOf(highlightMatch.original, cursor);
+            if (foundIndex === -1) {
+                foundIndex = source.indexOf(highlightMatch.original);
+            }
+
+            if (foundIndex !== -1) {
+                ranges.push({
+                    start: foundIndex,
+                    end: foundIndex + highlightMatch.original.length,
+                    idx,
+                    style: mode === 'grouped'
+                        ? (idx === currentMatchIndex
+                            ? "background: #ff5252; color: #fff; padding: 1px 2px; border-radius: 2px;"
+                            : "background: rgba(255, 82, 82, 0.85); color: #fff; padding: 1px 2px; border-radius: 2px;")
+                        : (idx === currentMatchIndex
+                            ? "background: #ff5252; color: #fff; padding: 1px 2px; border-radius: 2px;"
+                            : "background: rgba(255, 235, 59, 0.5); color: #333; padding: 1px 2px; border-radius: 2px;")
+                });
+                cursor = foundIndex + 1;
+            }
+        });
+
+        return ranges;
+    }
+
+    function renderCustomEditorSegment(segmentText, segmentStart, segmentEnd, baseStyle, highlightRanges) {
+        if (!segmentText) {
+            return '';
+        }
+
+        const boundaries = new Set([segmentStart, segmentEnd]);
+        highlightRanges.forEach(range => {
+            const overlapStart = Math.max(range.start, segmentStart);
+            const overlapEnd = Math.min(range.end, segmentEnd);
+            if (overlapEnd > overlapStart) {
+                boundaries.add(overlapStart);
+                boundaries.add(overlapEnd);
+            }
+        });
+
+        const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+        let html = '';
+
+        for (let i = 0; i < sortedBoundaries.length - 1; i++) {
+            const partStart = sortedBoundaries[i];
+            const partEnd = sortedBoundaries[i + 1];
+            if (partEnd <= partStart) continue;
+
+            const slice = segmentText.slice(partStart - segmentStart, partEnd - segmentStart);
+            let style = baseStyle || '';
+            let attrs = '';
+
+            const highlight = highlightRanges.find(range => partStart >= range.start && partEnd <= range.end);
+            if (highlight) {
+                style = style ? `${style}; ${highlight.style}` : highlight.style;
+                attrs = ` data-interactive-highlight="true" data-match-index="${highlight.idx}"`;
+            }
+
+            const styleAttr = style ? ` style="${style}"` : '';
+            html += `<span${attrs}${styleAttr}>${escapeHtmlForCustomEditor(slice)}</span>`;
+        }
+
+        return html;
+    }
+
+    function buildCustomEditorHTML(textEditor, text) {
+        const sourceText = typeof text === 'string' ? text : '';
+        const highlightRanges = computeCustomHighlightRanges(textEditor, sourceText);
+        const tokenRegex = /(<\/?b>|<\/?i>|\[[^\]]+\]\(\d+\))/gi;
+        let match;
+        let lastIndex = 0;
+        let htmlParts = [];
+        let boldActive = false;
+        let italicActive = false;
+
+        const pushPlainText = (segment, startIndex, endIndex) => {
+            if (!segment) return;
+            const styles = [];
+            if (boldActive) styles.push('font-weight: 600');
+            if (italicActive) styles.push('font-style: italic');
+            htmlParts.push(renderCustomEditorSegment(segment, startIndex, endIndex, styles.join('; '), highlightRanges));
+        };
+
+        while ((match = tokenRegex.exec(sourceText)) !== null) {
+            if (match.index > lastIndex) {
+                const plainSegment = sourceText.slice(lastIndex, match.index);
+                pushPlainText(plainSegment, lastIndex, match.index);
+            }
+
+            const token = match[0];
+            const tokenStart = match.index;
+            const tokenEnd = tokenStart + token.length;
+            let tokenStyle = 'color: #a0a6ad; font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace; opacity: 0.85;';
+            if (token.startsWith('[')) {
+                tokenStyle += ' font-weight: 500;';
+            }
+
+            htmlParts.push(renderCustomEditorSegment(token, tokenStart, tokenEnd, tokenStyle, highlightRanges));
+
+            if (/^<b>$/i.test(token)) {
+                boldActive = true;
+            } else if (/^<\/b>$/i.test(token)) {
+                boldActive = false;
+            } else if (/^<i>$/i.test(token)) {
+                italicActive = true;
+            } else if (/^<\/i>$/i.test(token)) {
+                italicActive = false;
+            }
+
+            lastIndex = tokenRegex.lastIndex;
+        }
+
+        if (lastIndex < sourceText.length) {
+            const remaining = sourceText.slice(lastIndex);
+            pushPlainText(remaining, lastIndex, sourceText.length);
+        }
+
+        if (htmlParts.length === 0) {
+            return '<span style="opacity: 0.4;">&#8203;</span>';
+        }
+
+        return htmlParts.join('');
+    }
+
+    function updateCustomEditorOverlay(textEditor) {
+        if (!textEditor || !textEditor._customOverlay) {
+            return;
+        }
+
+        const overlay = textEditor._customOverlay;
+        const content = textEditor.value || '';
+        overlay.innerHTML = buildCustomEditorHTML(textEditor, content);
+        overlay.scrollTop = textEditor.scrollTop;
+        overlay.scrollLeft = textEditor.scrollLeft;
+    }
+
+    function ensureCustomEditorOverlay(textEditor) {
+        if (!isLyricsEditorTextarea(textEditor)) {
+            return null;
+        }
+
+        if (textEditor._customEditorActive) {
+            updateCustomEditorOverlay(textEditor);
+            return textEditor._customOverlay || null;
+        }
+
+        const parent = textEditor.parentElement;
+        if (!parent) {
+            return null;
+        }
+
+        const styles = window.getComputedStyle(textEditor);
+
+        if (parent && (parent.style.position === '' || parent.style.position === 'static')) {
+            parent.style.position = 'relative';
+        }
+
+        const overlay = document.createElement('div');
+        overlay.dataset.customEditorOverlay = 'true';
+        overlay.className = 'scribetools-custom-editor-overlay';
+        overlay.style.position = 'absolute';
+        overlay.style.left = textEditor.offsetLeft + 'px';
+        overlay.style.top = textEditor.offsetTop + 'px';
+        overlay.style.width = textEditor.offsetWidth + 'px';
+        overlay.style.height = textEditor.offsetHeight + 'px';
+        overlay.style.pointerEvents = 'none';
+        overlay.style.whiteSpace = 'pre-wrap';
+        overlay.style.overflow = 'hidden';
+        overlay.style.font = styles.font;
+        overlay.style.lineHeight = styles.lineHeight;
+        overlay.style.padding = styles.padding;
+        overlay.style.boxSizing = 'border-box';
+        overlay.style.color = styles.color;
+        overlay.style.background = 'transparent';
+        overlay.style.border = styles.border;
+        overlay.style.borderRadius = styles.borderRadius;
+        overlay.style.margin = styles.margin;
+        overlay.style.letterSpacing = styles.letterSpacing;
+        overlay.style.wordBreak = 'break-word';
+        overlay.style.zIndex = '2';
+
+        parent.appendChild(overlay);
+
+        textEditor._customOverlay = overlay;
+        textEditor._customEditorActive = true;
+        textEditor.classList.add('scribetools-custom-editor-active');
+
+        if (!textEditor._customOriginalStyles) {
+            textEditor._customOriginalStyles = {
+                color: textEditor.style.color,
+                caretColor: textEditor.style.caretColor,
+                letterSpacing: textEditor.style.letterSpacing
+            };
+        }
+        if (textEditor._customOriginalSpellcheck === undefined) {
+            textEditor._customOriginalSpellcheck = textEditor.spellcheck;
+        }
+
+        textEditor.spellcheck = false;
+        textEditor.style.color = 'transparent';
+        textEditor.style.caretColor = styles.color || '#000';
+        if (styles.letterSpacing) {
+            textEditor.style.letterSpacing = styles.letterSpacing;
+        }
+
+        const syncOverlayScroll = () => {
+            overlay.scrollTop = textEditor.scrollTop;
+            overlay.scrollLeft = textEditor.scrollLeft;
+        };
+        textEditor.addEventListener('scroll', syncOverlayScroll);
+        textEditor._customOverlayScrollHandler = syncOverlayScroll;
+
+        const updateMetrics = () => {
+            const currentStyles = window.getComputedStyle(textEditor);
+            overlay.style.left = textEditor.offsetLeft + 'px';
+            overlay.style.top = textEditor.offsetTop + 'px';
+            overlay.style.width = textEditor.offsetWidth + 'px';
+            overlay.style.height = textEditor.offsetHeight + 'px';
+            overlay.style.font = currentStyles.font;
+            overlay.style.lineHeight = currentStyles.lineHeight;
+            overlay.style.padding = currentStyles.padding;
+            overlay.style.border = currentStyles.border;
+            overlay.style.borderRadius = currentStyles.borderRadius;
+            overlay.style.margin = currentStyles.margin;
+            overlay.style.color = currentStyles.color;
+            overlay.style.letterSpacing = currentStyles.letterSpacing;
+            syncOverlayScroll();
+        };
+
+        const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => updateMetrics()) : null;
+        if (resizeObserver) {
+            resizeObserver.observe(textEditor);
+            textEditor._customOverlayResizeObserver = resizeObserver;
+        }
+
+        const windowResizeHandler = () => updateMetrics();
+        window.addEventListener('resize', windowResizeHandler);
+        textEditor._customOverlayWindowResizeHandler = windowResizeHandler;
+
+        const inputHandler = () => updateCustomEditorOverlay(textEditor);
+        textEditor.addEventListener('input', inputHandler);
+        textEditor._customOverlayInputHandler = inputHandler;
+
+        updateMetrics();
+        updateCustomEditorOverlay(textEditor);
+
+        return overlay;
+    }
+
+    function disableCustomEditor(textEditor) {
+        if (!textEditor || !textEditor._customEditorActive) {
+            return;
+        }
+
+        if (textEditor._customOverlayScrollHandler) {
+            textEditor.removeEventListener('scroll', textEditor._customOverlayScrollHandler);
+            delete textEditor._customOverlayScrollHandler;
+        }
+
+        if (textEditor._customOverlayInputHandler) {
+            textEditor.removeEventListener('input', textEditor._customOverlayInputHandler);
+            delete textEditor._customOverlayInputHandler;
+        }
+
+        if (textEditor._customOverlayResizeObserver) {
+            textEditor._customOverlayResizeObserver.disconnect();
+            delete textEditor._customOverlayResizeObserver;
+        }
+
+        if (textEditor._customOverlayWindowResizeHandler) {
+            window.removeEventListener('resize', textEditor._customOverlayWindowResizeHandler);
+            delete textEditor._customOverlayWindowResizeHandler;
+        }
+
+        if (textEditor._customOverlay) {
+            textEditor._customOverlay.remove();
+            delete textEditor._customOverlay;
+        }
+
+        if (textEditor._customOriginalStyles) {
+            textEditor.style.color = textEditor._customOriginalStyles.color || '';
+            textEditor.style.caretColor = textEditor._customOriginalStyles.caretColor || '';
+            textEditor.style.letterSpacing = textEditor._customOriginalStyles.letterSpacing || '';
+            delete textEditor._customOriginalStyles;
+        } else {
+            textEditor.style.color = '';
+            textEditor.style.caretColor = '';
+            textEditor.style.letterSpacing = '';
+        }
+
+        if (textEditor._customOriginalSpellcheck !== undefined) {
+            textEditor.spellcheck = textEditor._customOriginalSpellcheck;
+            delete textEditor._customOriginalSpellcheck;
+        }
+
+        textEditor.classList.remove('scribetools-custom-editor-active');
+        delete textEditor._customEditorActive;
+    }
+
+    function applyCustomEditorSetting() {
+        const lyricEditors = Array.from(document.querySelectorAll('textarea'))
+            .filter(el => isLyricsEditorTextarea(el));
+
+        lyricEditors.forEach(textEditor => {
+            if (autoFixSettings.useCustomEditor) {
+                ensureCustomEditorOverlay(textEditor);
+            } else {
+                disableCustomEditor(textEditor);
+            }
+        });
+    }
+
     function highlightInteractiveMatch(textEditor, match, allMatches = null) {
         // Support both single match and multiple matches
         const matches = allMatches || [match];
@@ -8419,6 +8765,19 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Scroll to the conversion position first (scroll to the first/current match)
         scrollToPosition(textEditor, match.position);
 
+        const highlightState = textEditor._highlightState || {};
+        if (!Array.isArray(highlightState.matches) || highlightState.matches.length !== sortedMatches.length) {
+            highlightState.matches = sortedMatches.map(m => ({
+                position: m.position,
+                original: m.original,
+                replacement: m.replacement,
+                ruleId: m.rule?.id || m.rule?.description || 'unknown'
+            }));
+        }
+        highlightState.currentMatchIndex = currentMatchIndex;
+        highlightState.mode = isGroupedMode ? 'grouped' : 'sequential';
+        textEditor._highlightState = highlightState;
+
         if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
             // For textarea/input we create a temporary overlay to highlight characters
             // Store the original selection for restoration
@@ -8426,6 +8785,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             textEditor._originalSelectionEnd = textEditor.selectionEnd;
 
             textEditor.focus();
+
+            if (autoFixSettings.useCustomEditor && ensureCustomEditorOverlay(textEditor)) {
+                textEditor.classList.add('genius-highlighting-active');
+                updateCustomEditorOverlay(textEditor);
+                return;
+            }
 
             // Create highlight overlay
             const parent = textEditor.parentElement;
@@ -8670,6 +9035,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         }
 
         if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            if (textEditor._customEditorActive) {
+                if (textEditor._highlightState) {
+                    delete textEditor._highlightState;
+                }
+                updateCustomEditorOverlay(textEditor);
+                textEditor.classList.remove('genius-highlighting-active');
+                return;
+            }
             textEditor.classList.remove('genius-highlighting-active');
 
             // Restore original text color
@@ -8779,8 +9152,19 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     function positionPopupNearHighlight(popup, textEditor, match) {
         const updatePosition = () => {
             // Find the highlight element
-            const highlightSpan = textEditor.querySelector ?
-                textEditor.querySelector('span[style*="background-color: rgba(255, 235, 59"]') : null;
+            let highlightSpan = null;
+
+            if (textEditor._customOverlay) {
+                const currentIndex = textEditor._highlightState?.currentMatchIndex;
+                if (currentIndex !== undefined && currentIndex !== null) {
+                    highlightSpan = textEditor._customOverlay.querySelector(`[data-interactive-highlight="true"][data-match-index="${currentIndex}"]`);
+                }
+                if (!highlightSpan) {
+                    highlightSpan = textEditor._customOverlay.querySelector('[data-interactive-highlight="true"]');
+                }
+            } else if (textEditor.querySelector) {
+                highlightSpan = textEditor.querySelector('span[style*"background-color: rgba(255, 235, 59"]');
+            }
 
             let targetRect = null;
 
@@ -10317,6 +10701,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             }, 500); // Give other extension time to create its buttons
 
             updateButtonState();
+            applyCustomEditorSetting();
             console.log('Genius Em Dash Toggle and Auto Fix buttons added to editor');
             return true;
         } else {
@@ -10435,6 +10820,13 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             lastFocusedContextKey = context.key;
 
             if (context.type === 'lyrics') {
+                if (autoFixSettings.useCustomEditor && target.tagName === 'TEXTAREA') {
+                    ensureCustomEditorOverlay(target);
+                    updateCustomEditorOverlay(target);
+                } else if (!autoFixSettings.useCustomEditor && target._customEditorActive) {
+                    disableCustomEditor(target);
+                }
+
                 // Only remove highlights if there's no active autofix popup
                 if (!currentInteractivePopup) {
                     console.log('Cleaning up any lingering highlights on lyrics editor focus...');
@@ -10537,6 +10929,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                  // Load saved settings
         loadSettings();
         loadAutoscribeSettings();
+
+        applyCustomEditorSetting();
         
         // Load built-in rules from rules.json
         loadBuiltInRules();
@@ -10667,6 +11061,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
                         setTimeout(() => {
                             addButtonToEditor();
+                            applyCustomEditorSetting();
 
                             // Additional cleanup after buttons are added
                             const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
