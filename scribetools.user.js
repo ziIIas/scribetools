@@ -233,8 +233,10 @@
                 fontFamily: this.FONTS.primary,
                 minWidth: '350px',
                 maxWidth: '500px',
-                maxHeight: '80vh',
-                overflowY: 'auto'
+                width: '500px',
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                transition: 'width 0.3s ease, max-width 0.3s ease'
             };
 
             const styles = { ...baseStyles, ...additionalStyles };
@@ -461,14 +463,22 @@
                 font-family: monospace;
             `;
 
-            let replaceText = typeof rule.replace === 'string' ? rule.replace :
-                             typeof rule.replace === 'function' ? '[Function]' : rule.replace;
-
-            if (typeof rule.replace === 'string' && rule.replace.includes('\\')) {
-                let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
-                if (jsReplacement !== rule.replace) {
-                    replaceText += ` <span style="color: ${this.COLORS.success};">(JS: ${jsReplacement})</span>`;
+            let replaceText;
+            if (typeof rule.replace === 'function') {
+                // Show the actual function code
+                const funcCode = rule.replace.toString();
+                replaceText = `<span style="color: #6f42c1; font-family: monospace; font-size: 11px; display: block; white-space: pre-wrap; max-width: 100%; overflow-wrap: break-word;">[Function]<br>${funcCode}</span>`;
+            } else if (typeof rule.replace === 'string') {
+                replaceText = rule.replace;
+                
+                if (rule.replace.includes('\\')) {
+                    let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                    if (jsReplacement !== rule.replace) {
+                        replaceText += ` <span style="color: ${this.COLORS.success};">(JS: ${jsReplacement})</span>`;
+                    }
                 }
+            } else {
+                replaceText = rule.replace;
             }
 
             let enhancedBoundaryText = '';
@@ -870,6 +880,7 @@
             const customTabEl = document.getElementById('custom-rules-tab');
             const defaultContentEl = document.getElementById('default-settings-content');
             const customContentEl = document.getElementById('custom-rules-content');
+            const popup = document.getElementById('genius-settings-popup');
 
             if (tabName === 'default') {
                 // Update tab styles
@@ -881,6 +892,12 @@
                 // Show/hide content
                 defaultContentEl.style.display = 'block';
                 customContentEl.style.display = 'none';
+                
+                // Set narrow width for default settings
+                if (popup) {
+                    popup.style.width = '500px';
+                    popup.style.maxWidth = '500px';
+                }
             } else {
                 // Update tab styles
                 defaultTabEl.style.color = '#6c757d';
@@ -891,6 +908,12 @@
                 // Show/hide content
                 defaultContentEl.style.display = 'none';
                 customContentEl.style.display = 'block';
+                
+                // Set wide width for custom rules
+                if (popup) {
+                    popup.style.width = '1400px';
+                    popup.style.maxWidth = '90vw';
+                }
             }
         }
 
@@ -902,15 +925,10 @@
         const content = document.createElement('div');
 
         const settings = [
-            { key: 'contractions', label: 'Fix contractions (don\'t, can\'t, etc.)', type: 'checkbox' },
-            { key: 'capitalizeI', label: 'Capitalize standalone "i"', type: 'checkbox' },
-            { key: 'wordFixes', label: 'Word fixes (ok→okay, yea→yeah, etc.)', type: 'checkbox' },
-            { key: 'apostrophes', label: 'Add missing apostrophes (gon\'→gon\', \'til, etc.)', type: 'checkbox' },
             { key: 'parenthesesFormatting', label: 'Fix parentheses formatting', type: 'checkbox' },
             { key: 'bracketHighlighting', label: 'Highlight mismatched brackets', type: 'checkbox' },
             { key: 'emDashFixes', label: 'Convert word- to word— / word–', type: 'checkbox' },
             { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
-            { key: 'multipleSpaces', label: 'Fix spacing (multiple spaces → single, remove trailing)', type: 'checkbox' },
             { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
             { key: 'persistentAutoSave', label: 'Keep auto-saved drafts after Save / Save & Exit', type: 'checkbox' },
             { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja-)', type: 'checkbox' },
@@ -1421,153 +1439,646 @@
         }
     }
 
-    // Function to create a rule group element
+    // Function to get professional color scheme for a group
+    function getPastelColor(index) {
+        const colors = [
+            { bg: '#fff5f5', bgDark: '#ffe8e8', border: '#e74c3c', text: '#c0392b', accent: '#e74c3c' },  // Red
+            { bg: '#fffaf0', bgDark: '#fff4e0', border: '#f39c12', text: '#d68910', accent: '#f39c12' },  // Orange
+            { bg: '#f0fff4', bgDark: '#e0ffe8', border: '#27ae60', text: '#229954', accent: '#27ae60' },  // Green
+            { bg: '#f0f8ff', bgDark: '#e0f0ff', border: '#3498db', text: '#2980b9', accent: '#3498db' },  // Blue
+            { bg: '#faf5ff', bgDark: '#f0e8ff', border: '#9b59b6', text: '#8e44ad', accent: '#9b59b6' }   // Purple
+        ];
+        return colors[index % colors.length];
+    }
+
+    // Function to create a rule group element (Professional Table Style)
     function createRuleGroupElement(group, groupIndex) {
+        const color = getPastelColor(groupIndex);
+        
         const groupContainer = document.createElement('div');
         groupContainer.style.cssText = `
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            margin-bottom: 16px;
-            background: #fff;
+            border: 1px solid #e1e4e8;
+            border-left: 4px solid ${color.accent};
+            border-radius: 6px;
+            margin-bottom: 12px;
+            background: ${color.bg};
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            transition: box-shadow 0.2s ease;
         `;
+        
+        groupContainer.addEventListener('mouseenter', () => {
+            groupContainer.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
+        });
+        
+        groupContainer.addEventListener('mouseleave', () => {
+            groupContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+        });
 
-        // Group header
+        // Group header with controls
         const groupHeader = document.createElement('div');
         groupHeader.style.cssText = `
-            background: #f8f9fa;
+            background: ${color.bgDark};
             padding: 12px 16px;
-            border-bottom: 1px solid #dee2e6;
-            border-radius: 8px 8px 0 0;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 1px solid #e1e4e8;
             cursor: pointer;
             user-select: none;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: relative;
         `;
 
+        // Enable/Disable toggle
+        const enableToggle = document.createElement('input');
+        enableToggle.type = 'checkbox';
+        enableToggle.checked = group.enabled !== false;
+        enableToggle.style.cssText = `
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            margin: 0;
+            flex-shrink: 0;
+        `;
+        enableToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
+        enableToggle.addEventListener('change', (e) => {
+            e.stopPropagation();
+            group.enabled = enableToggle.checked;
+            saveSettings();
+            groupInfo.style.opacity = group.enabled ? '1' : '0.5';
+        });
+
+        // Color indicator
+        const colorIndicator = document.createElement('div');
+        colorIndicator.style.cssText = `
+            width: 6px;
+            height: 32px;
+            background: ${color.accent};
+            border-radius: 3px;
+            flex-shrink: 0;
+        `;
+
+        // Group info
         const groupInfo = document.createElement('div');
         groupInfo.style.cssText = `
             flex: 1;
+            min-width: 0;
+            opacity: ${group.enabled !== false ? '1' : '0.5'};
+            transition: opacity 0.2s ease;
         `;
 
         const groupTitle = document.createElement('div');
         groupTitle.textContent = group.title;
         groupTitle.style.cssText = `
-            font-weight: 500;
-            color: #333;
-            margin-bottom: 4px;
+            font-weight: 600;
+            color: #24292e;
+            font-size: 15px;
+            margin-bottom: 2px;
+            letter-spacing: -0.01em;
         `;
 
         const groupMeta = document.createElement('div');
+        groupMeta.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        `;
         groupMeta.innerHTML = `
-            <span style="font-size: 12px; color: #666;">${group.description}</span>
-            <br>
-            <span style="font-size: 11px; color: #999;">Author: ${group.author} | Version: ${group.version} | ${group.rules.length} rule${group.rules.length === 1 ? '' : 's'}</span>
+            <span style="font-size: 12px; color: #586069;">${group.description}</span>
+            <span style="font-size: 11px; color: #959da5; display: inline-flex; align-items: center; gap: 4px;">
+                <span style="background: ${color.accent}; color: white; padding: 2px 6px; border-radius: 3px; font-weight: 500;">v${group.version}</span>
+                <span>•</span>
+                <span>${group.rules.length} rule${group.rules.length !== 1 ? 's' : ''}</span>
+                ${group.author ? `<span>•</span><span>by ${group.author}</span>` : ''}
+            </span>
         `;
 
-        // Create delete group button - positioned absolutely at top-right
-        const deleteGroupBtn = createSmallButton('Delete Group', () => {
-            if (confirm(`Are you sure you want to delete the group "${group.title}" and all its rules?`)) {
+        groupInfo.appendChild(groupTitle);
+        groupInfo.appendChild(groupMeta);
+
+        // Expand indicator
+        const expandIndicator = document.createElement('div');
+        expandIndicator.innerHTML = '▼';
+        expandIndicator.style.cssText = `
+            font-size: 12px;
+            color: #586069;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+        `;
+
+        // Delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.innerHTML = '×';
+        deleteBtn.style.cssText = `
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            background: white;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            color: #cb2431;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+            line-height: 1;
+        `;
+        deleteBtn.addEventListener('mouseenter', () => {
+            deleteBtn.style.background = '#ffeef0';
+            deleteBtn.style.borderColor = '#cb2431';
+        });
+        deleteBtn.addEventListener('mouseleave', () => {
+            deleteBtn.style.background = 'white';
+            deleteBtn.style.borderColor = '#e1e4e8';
+        });
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm(`Delete "${group.title}" and all its rules?`)) {
                 autoFixSettings.ruleGroups.splice(groupIndex, 1);
                 saveSettings();
                 refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             }
         });
 
-        // Set base styles for delete button with absolute positioning
-        deleteGroupBtn.style.backgroundColor = '#dc3545';
-        deleteGroupBtn.style.color = 'white';
-        deleteGroupBtn.style.borderColor = '#dc3545';
-        deleteGroupBtn.style.fontSize = '10px';
-        deleteGroupBtn.style.padding = '2px 6px';
-        deleteGroupBtn.style.position = 'absolute';
-        deleteGroupBtn.style.top = '8px';
-        deleteGroupBtn.style.right = '8px';
-        deleteGroupBtn.style.zIndex = '10';
-
-        // Add proper hover effect using the UI utility
-        UI.addHoverEffect(deleteGroupBtn, {
-            backgroundColor: '#c82333',
-            borderColor: '#bd2130'
-        }, {
-            backgroundColor: '#dc3545',
-            color: 'white',
-            borderColor: '#dc3545'
-        });
-
-        const toggleIcon = document.createElement('span');
-        toggleIcon.innerHTML = '▼';
-        toggleIcon.style.cssText = `
-            font-size: 12px;
-            color: #666;
-            transition: transform 0.2s ease;
-            cursor: pointer;
-        `;
-
-        groupInfo.appendChild(groupTitle);
-        groupInfo.appendChild(groupMeta);
-
+        groupHeader.appendChild(enableToggle);
+        groupHeader.appendChild(colorIndicator);
         groupHeader.appendChild(groupInfo);
-        groupHeader.appendChild(toggleIcon);
-        groupHeader.appendChild(deleteGroupBtn);
+        groupHeader.appendChild(expandIndicator);
+        groupHeader.appendChild(deleteBtn);
 
-        // Group actions (initially hidden) - now empty since delete button moved to header
-        const groupActions = document.createElement('div');
-        groupActions.style.cssText = `
-            padding: 8px 16px;
-            background: #f8f9fa;
-            border-top: 1px solid #dee2e6;
+        // Rules grid (collapsed by default)
+        const rulesGrid = document.createElement('div');
+        rulesGrid.style.cssText = `
             display: none;
-            gap: 8px;
-            flex-wrap: wrap;
+            padding: 16px;
+            background: white;
         `;
 
-        // Delete button is now in the header, so this section can be used for future actions if needed
-
-        // Rules container (initially hidden)
+        // Container for rule cards
         const rulesContainer = document.createElement('div');
         rulesContainer.style.cssText = `
-            display: none;
-            padding: 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 12px;
+            margin-bottom: 12px;
         `;
+        
+        // Create rule cards
+        group.rules.forEach((rule, ruleIndex) => {
+            const ruleWrapper = document.createElement('div');
+            
+            const ruleCard = document.createElement('div');
+            ruleCard.style.cssText = `
+                background: ${color.bg};
+                border: 1px solid #e1e4e8;
+                border-radius: 6px;
+                padding: 12px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                transition: all 0.15s ease;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            `;
+            
+            const currentMode = rule.askMode || (rule.enabled === false ? 'off' : 'auto');
+            ruleCard.style.opacity = currentMode === 'off' ? '0.6' : '1';
+            
+            ruleCard.addEventListener('mouseenter', () => {
+                ruleCard.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+                ruleCard.style.borderColor = color.accent;
+            });
+            ruleCard.addEventListener('mouseleave', () => {
+                ruleCard.style.boxShadow = '0 1px 2px rgba(0,0,0,0.05)';
+                ruleCard.style.borderColor = '#e1e4e8';
+            });
 
-        // Toggle functionality - only for the group info area and toggle icon, not the delete button
+            // Rule description
+            const ruleDesc = document.createElement('div');
+            ruleDesc.textContent = rule.description || 'Unnamed rule';
+            ruleDesc.style.cssText = `
+                font-size: 13px;
+                font-weight: 500;
+                color: #24292e;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            `;
+
+            // Find and Replace preview (small text)
+            const previewContainer = document.createElement('div');
+            previewContainer.style.cssText = `
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+                font-size: 10px;
+                color: #6e7781;
+                font-family: 'Courier New', monospace;
+                margin-top: 4px;
+            `;
+            
+            const findPreview = document.createElement('div');
+            findPreview.style.cssText = `
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            `;
+            findPreview.innerHTML = `<span style="color: #959da5; font-weight: 600;">Find:</span> ${rule.find || ''}`;
+            
+            const replacePreview = document.createElement('div');
+            replacePreview.style.cssText = `
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            `;
+            const replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace || '';
+            replacePreview.innerHTML = `<span style="color: #959da5; font-weight: 600;">Replace:</span> ${replaceText}`;
+            
+            previewContainer.appendChild(findPreview);
+            previewContainer.appendChild(replacePreview);
+
+            // Bottom row with mode and edit button
+            const bottomRow = document.createElement('div');
+            bottomRow.style.cssText = `
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                margin-top: 4px;
+            `;
+
+            // Mode dropdown
+            const ruleMode = document.createElement('select');
+            ruleMode.style.cssText = `
+                flex: 1;
+                padding: 4px 8px;
+                border: 1px solid #d1d5da;
+                border-radius: 4px;
+                font-size: 11px;
+                background: white;
+                cursor: pointer;
+                font-weight: 500;
+                color: #24292e;
+            `;
+            
+            ruleMode.innerHTML = `
+                <option value="auto" ${currentMode === 'auto' ? 'selected' : ''}>✓ Auto</option>
+                <option value="ask" ${currentMode === 'ask' ? 'selected' : ''}>? Ask</option>
+                <option value="off" ${currentMode === 'off' ? 'selected' : ''}>✗ Off</option>
+            `;
+            
+            ruleMode.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+            
+            ruleMode.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const mode = ruleMode.value;
+                if (mode === 'off') {
+                    rule.enabled = false;
+                    delete rule.askMode;
+                } else {
+                    rule.enabled = true;
+                    rule.askMode = mode;
+                }
+                saveSettings();
+                ruleCard.style.opacity = mode === 'off' ? '0.6' : '1';
+            });
+
+            // Edit button
+            const editBtn = document.createElement('button');
+            editBtn.innerHTML = '⋯';
+            editBtn.style.cssText = `
+                width: 28px;
+                height: 28px;
+                padding: 0;
+                background: white;
+                border: 1px solid #e1e4e8;
+                border-radius: 4px;
+                color: #586069;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.1s ease;
+                line-height: 1;
+                flex-shrink: 0;
+            `;
+            editBtn.addEventListener('mouseenter', () => {
+                editBtn.style.background = '#f6f8fa';
+                editBtn.style.borderColor = '#d1d5da';
+            });
+            editBtn.addEventListener('mouseleave', () => {
+                editBtn.style.background = 'white';
+                editBtn.style.borderColor = '#e1e4e8';
+            });
+            
+            // Create inline edit form
+            const editForm = createInlineEditForm(rule, groupIndex, ruleIndex, false, ruleWrapper, color);
+            editForm.style.display = 'none';
+            editForm.style.gridColumn = '1 / -1'; // Span full width when editing
+            
+            editBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                // Close any other open edit forms in this group
+                rulesContainer.querySelectorAll('.edit-form').forEach(form => {
+                    if (form !== editForm) {
+                        form.style.display = 'none';
+                        const prevCard = form.previousElementSibling;
+                        if (prevCard) prevCard.style.display = 'flex';
+                    }
+                });
+                // Toggle this edit form
+                const isVisible = editForm.style.display === 'block';
+                editForm.style.display = isVisible ? 'none' : 'block';
+                ruleCard.style.display = isVisible ? 'flex' : 'none';
+            });
+
+            bottomRow.appendChild(ruleMode);
+            bottomRow.appendChild(editBtn);
+            
+            ruleCard.appendChild(ruleDesc);
+            ruleCard.appendChild(previewContainer);
+            ruleCard.appendChild(bottomRow);
+            
+            ruleWrapper.appendChild(ruleCard);
+            ruleWrapper.appendChild(editForm);
+            rulesContainer.appendChild(ruleWrapper);
+        });
+        
+        rulesGrid.appendChild(rulesContainer);
+
+        // Expand/collapse functionality - entire header is clickable
         let isExpanded = false;
-
-        const toggleHandler = (e) => {
-            // Don't toggle if the delete button was clicked
-            if (e.target === deleteGroupBtn || deleteGroupBtn.contains(e.target)) {
+        groupHeader.addEventListener('click', (e) => {
+            // Don't expand if clicking on delete button or toggle
+            if (e.target === deleteBtn || deleteBtn.contains(e.target) || e.target === enableToggle) {
                 return;
             }
-
+            
             isExpanded = !isExpanded;
-            if (isExpanded) {
-                rulesContainer.style.display = 'block';
-                groupActions.style.display = 'flex';
-                toggleIcon.style.transform = 'rotate(-90deg)';
-
-                // Load rules if not already loaded
-                if (rulesContainer.children.length === 0) {
-                    group.rules.forEach((rule, ruleIndex) => {
-                        const ruleElement = createGroupRuleElement(rule, groupIndex, ruleIndex, group.title);
-                        rulesContainer.appendChild(ruleElement);
-                    });
-                }
-            } else {
-                rulesContainer.style.display = 'none';
-                groupActions.style.display = 'none';
-                toggleIcon.style.transform = 'rotate(0deg)';
-            }
-        };
-
-        groupHeader.addEventListener('click', toggleHandler);
+            rulesGrid.style.display = isExpanded ? 'block' : 'none';
+            expandIndicator.style.transform = isExpanded ? 'rotate(180deg)' : 'rotate(0deg)';
+        });
 
         groupContainer.appendChild(groupHeader);
-        groupContainer.appendChild(groupActions);
-        groupContainer.appendChild(rulesContainer);
+        groupContainer.appendChild(rulesGrid);
 
         return groupContainer;
+    }
+    
+    // Function to create inline edit form with compact two-column grid layout
+    function createInlineEditForm(rule, groupIndex, ruleIndex, isUngrouped, parentWrapper, color) {
+        const editForm = document.createElement('div');
+        editForm.className = 'edit-form';
+        editForm.style.cssText = `
+            padding: 16px;
+            background: #fafbfc;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+        `;
+        
+        const formGrid = document.createElement('div');
+        formGrid.style.cssText = `
+            display: grid;
+            grid-template-columns: 1fr 180px;
+            gap: 12px 16px;
+            margin-bottom: 12px;
+        `;
+        
+        // Description field (full width)
+        const descField = createFormFieldInline('Description', 'text', rule.description || '');
+        descField.style.gridColumn = '1 / -1';
+        
+        // Find field (full width)
+        const findField = createFormFieldInline('Find Pattern', 'text', rule.find || '');
+        findField.style.gridColumn = '1 / -1';
+        
+        // Replace field (full width, textarea)
+        const replaceField = createFormFieldInline('Replace With', 'textarea', 
+            typeof rule.replace === 'function' ? rule.replace.toString() : 
+            typeof rule.replace === 'string' ? rule.replace : '', true);
+        replaceField.style.gridColumn = '1 / -1';
+        
+        // Flags field (flexible width - takes remaining space)
+        const flagsField = createFormFieldInline('Flags', 'text', rule.flags || 'gi');
+        flagsField.style.gridColumn = '1 / 2';
+        
+        // Enhanced boundary checkbox
+        const enhancedContainer = document.createElement('div');
+        enhancedContainer.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            grid-column: '2 / 3';
+        `;
+        
+        const enhancedLabelTop = document.createElement('label');
+        enhancedLabelTop.textContent = 'Enhanced Boundary';
+        enhancedLabelTop.style.cssText = `
+            font-size: 12px;
+            font-weight: 600;
+            color: #24292e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        `;
+        
+        const enhancedCheckboxContainer = document.createElement('div');
+        enhancedCheckboxContainer.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: white;
+            border: 1px solid #d1d5da;
+            border-radius: 4px;
+            height: 38px;
+        `;
+        
+        const enhancedCheckbox = document.createElement('input');
+        enhancedCheckbox.type = 'checkbox';
+        enhancedCheckbox.checked = rule.enhancedBoundary || false;
+        enhancedCheckbox.style.cssText = `
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            margin: 0;
+        `;
+        
+        const enhancedLabel = document.createElement('label');
+        enhancedLabel.textContent = 'Enabled';
+        enhancedLabel.style.cssText = `
+            font-size: 13px;
+            color: #24292e;
+            cursor: pointer;
+            user-select: none;
+        `;
+        
+        enhancedLabel.addEventListener('click', () => {
+            enhancedCheckbox.checked = !enhancedCheckbox.checked;
+        });
+        
+        enhancedCheckboxContainer.appendChild(enhancedCheckbox);
+        enhancedCheckboxContainer.appendChild(enhancedLabel);
+        enhancedContainer.appendChild(enhancedLabelTop);
+        enhancedContainer.appendChild(enhancedCheckboxContainer);
+        
+        formGrid.appendChild(descField);
+        formGrid.appendChild(findField);
+        formGrid.appendChild(replaceField);
+        formGrid.appendChild(flagsField);
+        formGrid.appendChild(enhancedContainer);
+        
+        // Buttons
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = `
+            display: flex;
+            gap: 8px;
+            justify-content: flex-start;
+        `;
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Save';
+        saveBtn.style.cssText = `
+            padding: 6px 14px;
+            background: ${color.accent};
+            border: 1px solid ${color.accent};
+            border-radius: 4px;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        `;
+        saveBtn.addEventListener('mouseenter', () => {
+            saveBtn.style.background = color.text;
+            saveBtn.style.borderColor = color.text;
+        });
+        saveBtn.addEventListener('mouseleave', () => {
+            saveBtn.style.background = color.accent;
+            saveBtn.style.borderColor = color.accent;
+        });
+        saveBtn.addEventListener('click', () => {
+            const description = descField.querySelector('input, textarea').value.trim();
+            const find = findField.querySelector('input, textarea').value.trim();
+            const replace = replaceField.querySelector('input, textarea').value.trim();
+            const flags = flagsField.querySelector('input, textarea').value.trim();
+            const enhancedBoundary = enhancedCheckbox.checked;
+            
+            if (!find) {
+                alert('Find pattern is required.');
+                return;
+            }
+            
+            // Update the rule
+            const updatedRule = {
+                ...rule,
+                description: description || `Rule ${ruleIndex + 1}`,
+                find: find,
+                replace: replace,
+                flags: flags,
+                enhancedBoundary: enhancedBoundary
+            };
+            
+            // Save to the appropriate location
+            if (isUngrouped) {
+                autoFixSettings.ungroupedRules[ruleIndex] = updatedRule;
+            } else {
+                autoFixSettings.ruleGroups[groupIndex].rules[ruleIndex] = updatedRule;
+            }
+            
+            saveSettings();
+            refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
+        });
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = `
+            padding: 6px 14px;
+            background: white;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            color: #24292e;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        `;
+        cancelBtn.addEventListener('mouseenter', () => {
+            cancelBtn.style.background = '#f6f8fa';
+            cancelBtn.style.borderColor = '#d1d5da';
+        });
+        cancelBtn.addEventListener('mouseleave', () => {
+            cancelBtn.style.background = 'white';
+            cancelBtn.style.borderColor = '#e1e4e8';
+        });
+        cancelBtn.addEventListener('click', () => {
+            editForm.style.display = 'none';
+            const prevCard = parentWrapper.querySelector('div[style*="flex-direction: column"]');
+            if (prevCard) prevCard.style.display = 'flex';
+        });
+        
+        buttonContainer.appendChild(saveBtn);
+        buttonContainer.appendChild(cancelBtn);
+        
+        editForm.appendChild(formGrid);
+        editForm.appendChild(buttonContainer);
+        
+        return editForm;
+    }
+    
+    // Helper function to create inline form fields
+    function createFormFieldInline(label, type, value = '', isMonospace = false) {
+        const container = document.createElement('div');
+        container.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        `;
+        
+        const labelEl = document.createElement('label');
+        labelEl.textContent = label;
+        labelEl.style.cssText = `
+            font-size: 12px;
+            font-weight: 600;
+            color: #24292e;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        `;
+        
+        let input;
+        if (type === 'textarea') {
+            input = document.createElement('textarea');
+            input.rows = 3;
+            input.style.cssText = `
+                padding: 8px 12px;
+                border: 1px solid #d1d5da;
+                border-radius: 4px;
+                background: white;
+                color: #24292e;
+                font-size: 13px;
+                font-family: ${isMonospace ? "'Courier New', monospace" : "'Programme', Arial, sans-serif"};
+                resize: vertical;
+                min-height: 60px;
+            `;
+        } else {
+            input = document.createElement('input');
+            input.type = type;
+            input.style.cssText = `
+                padding: 8px 12px;
+                border: 1px solid #d1d5da;
+                border-radius: 4px;
+                background: white;
+                color: #24292e;
+                font-size: 13px;
+                font-family: ${isMonospace ? "'Courier New', monospace" : "'Programme', Arial, sans-serif"};
+            `;
+        }
+        input.value = value;
+        
+        container.appendChild(labelEl);
+        container.appendChild(input);
+        return container;
     }
     // Function to create ungrouped rules element
     function createUngroupedRulesElement() {
@@ -1898,9 +2409,33 @@
         // Find field
         const findField = createFormField('Find Pattern', 'text', rule.find || '');
 
-        // Replace field
-        const replaceField = createFormField('Replace With', 'text',
-            typeof rule.replace === 'string' ? rule.replace : '');
+        // Replace field (use textarea for better editing of functions)
+        const replaceFieldContainer = document.createElement('div');
+        replaceFieldContainer.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+        
+        const replaceLabel = document.createElement('label');
+        replaceLabel.textContent = 'Replace With';
+        replaceLabel.style.cssText = 'font-weight: 400; color: #333; font-family: Programme, Arial, sans-serif;';
+        
+        const replaceInput = document.createElement('textarea');
+        replaceInput.value = typeof rule.replace === 'function' ? rule.replace.toString() : 
+                             typeof rule.replace === 'string' ? rule.replace : '';
+        replaceInput.rows = 3;
+        replaceInput.style.cssText = `
+            padding: 8px 12px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 60px;
+        `;
+        
+        replaceFieldContainer.appendChild(replaceLabel);
+        replaceFieldContainer.appendChild(replaceInput);
+        const replaceField = replaceFieldContainer;
 
         // Flags field
         const flagsField = createFormField('Flags', 'text', rule.flags || 'gi');
@@ -1959,7 +2494,7 @@
         const saveBtn = createSmallButton('Save', () => {
             const description = descriptionField.querySelector('input').value.trim();
             const find = findField.querySelector('input').value.trim();
-            const replace = replaceField.querySelector('input').value.trim();
+            const replace = replaceField.querySelector('textarea').value.trim();
             const flags = flagsField.querySelector('input').value.trim();
             const enhancedBoundary = enhancedBoundaryCheckbox.checked;
 
@@ -2367,9 +2902,15 @@
                                     .map(restoreFunction);
 
                                 if (validGroupRules.length > 0) {
-                                    // Add the group with its validated rules
+                                    // Add the group with its validated rules and all metadata
                                     autoFixSettings.ruleGroups.push({
-                                        name: group.name || 'Imported Group',
+                                        id: group.id,
+                                        title: group.title || group.name || 'Imported Group',
+                                        name: group.name || group.title || 'Imported Group',
+                                        description: group.description || '',
+                                        author: group.author,
+                                        version: group.version,
+                                        enabled: group.enabled !== false,
                                         rules: validGroupRules
                                     });
                                     totalImported += validGroupRules.length;
@@ -3556,6 +4097,65 @@
             }
         } catch (e) {
             console.error('Fatal error loading settings:', e);
+        }
+    }
+
+    // Function to load built-in rules from rules.json
+    async function loadBuiltInRules() {
+        try {
+            const response = await fetch('https://raw.githubusercontent.com/ziIIas/scribetools/refs/heads/main/rules.json');
+            if (!response.ok) {
+                console.error('Failed to fetch built-in rules:', response.status);
+                return;
+            }
+            
+            const data = await response.json();
+            
+            // Helper function to restore functions from strings
+            const restoreFunction = (rule) => {
+                if (typeof rule.replace === 'string') {
+                    const trimmed = rule.replace.trim();
+                    if (trimmed.startsWith('function') || trimmed.startsWith('(')) {
+                        try {
+                            rule.replace = eval(`(${trimmed})`);
+                        } catch (e) {
+                            console.warn('Failed to restore function for rule:', rule.description || rule.find);
+                        }
+                    }
+                }
+                return rule;
+            };
+            
+            if (data.ruleGroups && Array.isArray(data.ruleGroups)) {
+                if (!autoFixSettings.ruleGroups) {
+                    autoFixSettings.ruleGroups = [];
+                }
+                
+                // Process each rule group from rules.json
+                data.ruleGroups.forEach(group => {
+                    // Check if this built-in group already exists
+                    const existingIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id && g.isBuiltIn);
+                    
+                    const processedGroup = {
+                        ...group,
+                        isBuiltIn: true, // Mark as built-in
+                        rules: group.rules ? group.rules.map(restoreFunction) : []
+                    };
+                    
+                    if (existingIndex >= 0) {
+                        // Update existing built-in group
+                        autoFixSettings.ruleGroups[existingIndex] = processedGroup;
+                    } else {
+                        // Add new built-in group
+                        autoFixSettings.ruleGroups.push(processedGroup);
+                    }
+                });
+                
+                console.log('Built-in rules loaded successfully from rules.json');
+                saveSettings();
+            }
+        } catch (error) {
+            console.error('Error loading built-in rules:', error);
         }
     }
 
@@ -8399,286 +8999,92 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         console.log('Before fixes:', fixedText.substring(0, 100) + '...');
 
-        if (autoFixSettings.capitalizeI) {
-            // Fix standalone "i" to "I" when followed by space, dash, punctuation, or end of string
-            fixedText = fixedText.replace(/\bi(?=[\s\-\.,!?;:\)\]\}'""]|$)/g, "I");
-            console.log('After i fixes:', fixedText.includes(' I ') ? 'FOUND I' : 'NO I FOUND');
+        // Helper function to apply rules from built-in rule groups by tag
+        const applyRulesByTag = (tag, enabled, contextLabel) => {
+            if (!enabled) return;
+            
+            console.log(`Applying rules with tag "${tag}" from built-in groups...`);
+            
+            // Find all rules with the specified tag from built-in rule groups
+            const rulesToApply = [];
+            if (autoFixSettings.ruleGroups) {
+                autoFixSettings.ruleGroups.forEach(group => {
+                    // Check if group is built-in AND enabled
+                    if (group.isBuiltIn && group.enabled !== false && group.rules) {
+                        group.rules.forEach(rule => {
+                            // Check if rule has the tag and is not explicitly disabled
+                            if (rule.tags && rule.tags.includes(tag) && rule.enabled !== false) {
+                                rulesToApply.push({...rule, contextLabel: `${group.title} (built-in)`});
+                            }
+                        });
+                    }
+                });
+            }
+            
+            // Apply each rule
+            rulesToApply.forEach(rule => {
+                try {
+                    let processedFind = rule.find;
+                    let processedFlags = rule.flags || 'gi';
 
-            // Fix "i'" contractions to "I'" (i'm, i'll, i've, i'd, etc.)
-            fixedText = fixedText.replace(/\bi'/g, "I'");
-        }
+                    if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                        processedFlags = processedFlags.replace(/e/g, '');
+                        const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                        const startBoundary = `(?<=^|${boundaryChars})`;
+                        const endBoundary = `(?=${boundaryChars}|$)`;
 
-        // Auto apostrophe fixes for common contractions
-        if (autoFixSettings.contractions) {
-            console.log('Starting apostrophe fixes...');
+                        if (processedFind.includes('\\b')) {
+                            processedFind = processedFind
+                                .replace(/^\\b/, startBoundary)
+                                .replace(/\\b$/, endBoundary)
+                                .replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+                        } else {
+                            processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                        }
+                    }
 
-        // Basic contractions (most common ones)
-        fixedText = fixedText.replace(/\bdont\b/gi, "don't");
-        fixedText = fixedText.replace(/\bcant\b/gi, "can't");
-        fixedText = fixedText.replace(/\bwont\b/gi, "won't");
-        fixedText = fixedText.replace(/\bisnt\b/gi, "isn't");
-        fixedText = fixedText.replace(/\bwasnt\b/gi, "wasn't");
-        fixedText = fixedText.replace(/\bwerent\b/gi, "weren't");
-        fixedText = fixedText.replace(/\barent\b/gi, "aren't");
-        fixedText = fixedText.replace(/\bdidnt\b/gi, "didn't");
-        fixedText = fixedText.replace(/\bcouldnt\b/gi, "couldn't");
-        fixedText = fixedText.replace(/\bwouldnt\b/gi, "wouldn't");
-        fixedText = fixedText.replace(/\bshouldnt\b/gi, "shouldn't");
-        fixedText = fixedText.replace(/\bhasnt\b/gi, "hasn't");
-        fixedText = fixedText.replace(/\bhavent\b/gi, "haven't");
-        fixedText = fixedText.replace(/\bhadnt\b/gi, "hadn't");
+                    let replaceValue = rule.replace;
+                    if (typeof replaceValue === 'string') {
+                        const trimmed = replaceValue.trim();
+                        if (trimmed.startsWith('function') || trimmed.startsWith('(')) {
+                            try {
+                                replaceValue = eval(trimmed);
+                            } catch (error) {
+                                console.log(`Failed to evaluate replace function for rule "${rule.description}":`, error);
+                            }
+                        }
+                    }
 
-        // "You" contractions
-        fixedText = fixedText.replace(/\byoure\b/gi, "you're");
-        fixedText = fixedText.replace(/\byoull\b/gi, "you'll");
-        fixedText = fixedText.replace(/\byouve\b/gi, "you've");
-        fixedText = fixedText.replace(/\byoud\b/gi, "you'd");
-
-        // "They" contractions
-        fixedText = fixedText.replace(/\btheyre\b/gi, "they're");
-        fixedText = fixedText.replace(/\btheyll\b/gi, "they'll");
-        fixedText = fixedText.replace(/\btheyve\b/gi, "they've");
-        fixedText = fixedText.replace(/\btheyd\b/gi, "they'd");
-
-        // "We" contractions (with some context awareness)
-        // Exclude "were here yesterday" type patterns where "here" is followed by time words
-        fixedText = fixedText.replace(/\bwere\b(?=\s+(?:going|gonna|not|all|together|done|made))/gi, "we're");
-        // Handle "were here/there" more carefully - only if it's clearly present tense context
-        fixedText = fixedText.replace(/\bwere\b(?=\s+(?:here|there)(?:\s+(?:now|today|earlier|before|waiting|standing|sitting|looking|watching|talking|going|coming|ready|about|just)|\s*[,.]|\s*$))/gi, "we're");
-        fixedText = fixedText.replace(/\bwell\b(?=\s+(?:see|be|go|have|get|do|make|take|come|find))/gi, "we'll");
-        fixedText = fixedText.replace(/\bweve\b/gi, "we've");
-        fixedText = fixedText.replace(/\bwed\b/gi, "we'd");
-
-        // "It" contractions (with context)
-        fixedText = fixedText.replace(/\bits\b(?=\s+(?:a|an|the|not|been|going|gonna|time|over|all|really|just|like|so|very))/gi, "it's");
-        fixedText = fixedText.replace(/\bitll\b/gi, "it'll");
-        fixedText = fixedText.replace(/\bitd\b/gi, "it'd");
-
-        // Other common ones
-        fixedText = fixedText.replace(/\bthats\b/gi, "that's");
-        fixedText = fixedText.replace(/\bwhats\b/gi, "what's");
-        fixedText = fixedText.replace(/\bheres\b/gi, "here's");
-        fixedText = fixedText.replace(/\btheres\b/gi, "there's");
-        fixedText = fixedText.replace(/\bwheres\b/gi, "where's");
-        fixedText = fixedText.replace(/\bhes\b(?=\s+(?:a|an|the|not|been|going|gonna|like|so|very|all|really|just))/gi, "he's");
-        fixedText = fixedText.replace(/\bshes\b(?=\s+(?:a|an|the|not|been|going|gonna|like|so|very|all|really|just))/gi, "she's");
-
-        // Special case: "im" to "I'm"
-        fixedText = fixedText.replace(/\bim\b(?=\s)/gi, "I'm");
-
-            console.log('After apostrophe fixes:', fixedText.includes("don't") ? 'FOUND APOSTROPHES' : 'NO APOSTROPHES FOUND');
-        }
-
-        // Additional word fixes
-        if (autoFixSettings.wordFixes) {
-            console.log('Starting additional word fixes...');
-
-        // Fix "ok" to "okay" but preserve specific producer tag phrases
-        console.log('Processing ok → okay with whitelist...');
-
-        // Store whitelisted phrases with placeholders to protect them
-        const okWhitelist = [
-            /ok,?\s+let\s+me\s+hear\s+your\s+tag/gi,
-            /ok\s+is\s+the\s+hardest,?\s+i\s+swear\s+to\s+god/gi
-        ];
-
-        let protectedPhrases = [];
-        let placeholderIndex = 0;
-
-        // Replace whitelisted phrases with placeholders
-        okWhitelist.forEach(pattern => {
-            fixedText = fixedText.replace(pattern, function(match) {
-                const placeholder = `__OK_PLACEHOLDER_${placeholderIndex}__`;
-                protectedPhrases.push({ placeholder: placeholder, original: match });
-                placeholderIndex++;
-                console.log('Protected phrase:', match);
-                return placeholder;
+                    const regex = new RegExp(processedFind, processedFlags);
+                    
+                    if (typeof replaceValue === 'function') {
+                        fixedText = fixedText.replace(regex, replaceValue);
+                    } else {
+                        let jsReplacement = replaceValue;
+                        if (typeof jsReplacement === 'string') {
+                            jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                        }
+                        fixedText = fixedText.replace(regex, jsReplacement);
+                    }
+                } catch (e) {
+                    console.log(`Rule "${rule.description}" from ${rule.contextLabel} failed:`, e.message);
+                }
             });
-        });
+            
+            console.log(`Applied ${rulesToApply.length} rules with tag "${tag}"`);
+        };
 
-        // Now replace all remaining "ok" instances with "okay"
-        fixedText = fixedText.replace(/\bok\b/gi, function(match) {
-            // Preserve capitalization
-            if (match === 'OK') return 'OKAY';
-            if (match === 'Ok') return 'Okay';
-            return 'okay';
-        });
-
-        // Restore the protected phrases
-        protectedPhrases.forEach(({ placeholder, original }) => {
-            fixedText = fixedText.replace(placeholder, original);
-            console.log('Restored phrase:', original);
-        });
-
-        // Fix "sumn" to "somethin'" (but don't change "somethin'" to "somethin''")
-        fixedText = fixedText.replace(/\bsumn(?!')\b/gi, function(match) {
-            // Preserve capitalization
-            if (match === 'SUMN') return "SOMETHIN'";
-            if (match === 'Sumn') return "Somethin'";
-            return "somethin'";
-        });
-
-        // Fix "yuh" and "yea" to "yeah" (preserve capitalization)
-        fixedText = fixedText.replace(/\byuh\b/gi, function(match) {
-            if (match === 'YUH') return 'YEAH';
-            if (match === 'Yuh') return 'Yeah';
-            return 'yeah';
-        });
-
-        fixedText = fixedText.replace(/\byea\b/gi, function(match) {
-            if (match === 'YEA') return 'YEAH';
-            if (match === 'Yea') return 'Yeah';
-            return 'yeah';
-        });
-
-        // Fix "aye" and "ay" to "ayy"
-        fixedText = fixedText.replace(/\b(aye|ay)\b/gi, function(match) {
-            if (match === 'AYE' || match === 'AY') return 'AYY';
-            if (match === 'Aye' || match === 'Ay') return 'Ayy';
-            return 'ayy';
-        });
-
-        // Fix "hoe" to "ho"
-        fixedText = fixedText.replace(/\bhoe\b/gi, function(match) {
-            if (match === 'HOE') return 'HO';
-            if (match === 'Hoe') return 'Ho';
-            return 'ho';
-        });
-
-        // Fix "skrt" to "skkrt"
-        fixedText = fixedText.replace(/\bskrt\b/gi, function(match) {
-            if (match === 'SKRT') return 'SKRRT';
-            if (match === 'SKRTT') return 'SKRRT';
-            if (match === 'Skrtt') return 'Skrrt';
-            if (match === 'Skrt') return 'Skrrt';
-            if (match === 'skrtt') return 'skrrt';
-            return 'skrrt';
-        });
-
-        // Fix "lil" or "li'l" to "lil'" (but don't change "lil'" to "lil''")
-        fixedText = fixedText.replace(/\b(lil|li'l)(?!')\b/gi, function(match) {
-            if (match === 'LIL' || match === "LI'L") return "LIL'";
-            if (match === 'Lil' || match === "Li'l") return "Lil'";
-            return "lil'";
-        });
-
-        // Fix "whoa" to "woah"
-        fixedText = fixedText.replace(/\bwhoa\b/gi, function(match) {
-            if (match === 'WHOA') return 'WOAH';
-            if (match === 'Whoa') return 'Woah';
-            return 'woah';
-        });
-
-        // Fix "dawg" to "dog"
-        fixedText = fixedText.replace(/\bdawg\b/gi, function(match) {
-            if (match === 'DAWG') return 'DOG';
-            if (match === 'Dawg') return 'Dog';
-            return 'dog';
-        });
-
-        // Fix "choppa" to "chopper"
-        fixedText = fixedText.replace(/\bchoppa\b/gi, function(match) {
-            if (match === 'CHOPPA') return 'CHOPPER';
-            if (match === 'Choppa') return 'Chopper';
-            return 'chopper';
-        });
-
-        // Fix "oughtta" to "oughta"
-        fixedText = fixedText.replace(/\boughtta\b/gi, function(match) {
-            if (match === 'OUGHTTA') return 'OUGHTA';
-            if (match === 'Oughtta') return 'Oughta';
-            return 'oughta';
-        });
-
-        // Fix "naïve" to "naive"
-        fixedText = fixedText.replace(/\bnaïve\b/gi, function(match) {
-            if (match === 'NAÏVE') return 'NAIVE';
-            if (match === 'Naïve') return 'Naive';
-            return 'naive';
-        });
-
-        // Fix "all right" to "alright"
-        fixedText = fixedText.replace(/\ball right\b/gi, function(match) {
-            if (match === 'ALL RIGHT') return 'ALRIGHT';
-            if (match === 'All Right' || match === 'All right') return 'Alright';
-            return 'alright';
-        });
-
-        // Fix "cliche" to "cliché"
-        fixedText = fixedText.replace(/\bcliche\b/gi, function(match) {
-            if (match === 'CLICHE') return 'CLICHÉ';
-            if (match === 'Cliche') return 'Cliché';
-            return 'cliché';
-        });
-
-        // Fix "A.S.A.P." to "ASAP"
-        fixedText = fixedText.replace(/\bA\.S\.A\.P\./gi, 'ASAP');
-
-        // Fix "V.I.P." and "V.I.P.s" to "VIP" and "VIPs"
-        fixedText = fixedText.replace(/\bV\.I\.P\.s\b/gi, 'VIPs');
-        fixedText = fixedText.replace(/\bV\.I\.P\./gi, 'VIP');
-
-        // Add missing apostrophes to common contractions
-        console.log('Adding missing apostrophes...');
-
-        // Words that need apostrophes at the end
-        fixedText = fixedText.replace(/\bgon\b(?!')/gi, function(match) {
-            // Preserve capitalization
-            if (match === 'GON') return "GON'";
-            if (match === 'Gon') return "Gon'";
-            return "gon'";
-        });
-
-        fixedText = fixedText.replace(/\bfuckin\b(?!')/gi, function(match) {
-            if (match === 'FUCKIN') return "FUCKIN'";
-            if (match === 'Fuckin') return "Fuckin'";
-            return "fuckin'";
-        });
-
-        // Words that need apostrophes at the beginning (but only in certain contexts)
-        // 'til (until)
-        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\btil\b(?!')/gi, function(match) {
-            if (match === 'TIL') return "'TIL";
-            if (match === 'Til') return "'Til";
-            return "'til";
-        });
-
-        // 'cause (because) - be careful not to change "cause" as in "the cause of"
-        // Also avoid matching when already preceded by an apostrophe (straight or curly)
-        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bcause\b(?=\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))/gi, function(match) {
-            if (match === 'CAUSE') return "'CAUSE";
-            if (match === 'Cause') return "'Cause";
-            return "'cause";
-        });
-
-        // 'cuz (because) - be careful not to change when it means "cousin"
-        // Avoid matching when preceded by possessive pronouns (my cuz, our cuz, etc.)
-        // Handle both 'cuz and cuz, don't duplicate apostrophes, and DON'T match 'cause
-        fixedText = fixedText.replace(/(?<!(?:my|our|your|his|her|their|the)\s+)(?<![''\u2018\u2019])('?)cuz\b(?!se\b)/gi, function(match, existingApostrophe) {
-            // If there's already an apostrophe, keep it; otherwise add one
-            const apostrophe = existingApostrophe ? existingApostrophe : "'";
-
-            if (match === "'CUZ" || match === "CUZ") return apostrophe + "cause";
-            if (match === "'Cuz" || match === "Cuz") return apostrophe + "cause";
-            return apostrophe + "cause";
-        });
-
-        // 'bout (about)
-        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bbout\b(?!')/gi, function(match) {
-            if (match === 'BOUT') return "'BOUT";
-            if (match === 'Bout') return "'Bout";
-            return "'bout";
-        });
-
-        // 'fore (before)
-        // Also avoid matching when already preceded by an apostrophe (straight or curly)
-        fixedText = fixedText.replace(/(?<![''\u2018\u2019])\bfore\b(?=\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))/gi, function(match) {
-            if (match === 'FORE') return "'FORE";
-            if (match === 'Fore') return "'Fore";
-            return "'fore";
-        });
-
-            console.log('After adding missing apostrophes:', 'completed');
+        // Apply built-in rules (always enabled when customRegex is on)
+        if (autoFixSettings.customRegex) {
+            applyRulesByTag('capitalization', true, 'Capitalization fixes');
+            applyRulesByTag('contractions', true, 'Contraction fixes');
+            applyRulesByTag('spelling', true, 'Spelling fixes');
+            applyRulesByTag('apostrophes', true, 'Apostrophe fixes');
+        }
+        
+        // Apply punctuation rules (always enabled with customRegex)
+        if (autoFixSettings.customRegex) {
+            applyRulesByTag('punctuation', true, 'Punctuation fixes');
         }
 
         // Fix parentheses formatting - move parentheses outside of bold/italic tags
@@ -8971,13 +9377,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             });
         }
 
-        // Replace multiple consecutive spaces with single space and remove trailing spaces
-        if (autoFixSettings.multipleSpaces) {
-            console.log('Replacing multiple spaces with single space and removing trailing spaces...');
-            // Pattern: 2 or more consecutive space characters
-            fixedText = fixedText.replace(/ {2,}/g, ' ');
-            // Pattern: spaces or tabs at the end of lines (before newlines)
-            fixedText = fixedText.replace(/[ \t]+$/gm, '');
+        // Apply formatting rules (spacing)
+        if (autoFixSettings.customRegex) {
+            applyRulesByTag('formatting', true, 'Formatting fixes');
         }
         // Apply custom regex rules BEFORE number conversion
         let interactiveRuleMatches = [];
@@ -10135,6 +10537,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                  // Load saved settings
         loadSettings();
         loadAutoscribeSettings();
+        
+        // Load built-in rules from rules.json
+        loadBuiltInRules();
 
         // Verify settings persistence every 5 minutes
         setInterval(verifySettingsPersistence, 5 * 60 * 1000);
