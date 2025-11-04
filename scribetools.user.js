@@ -5885,8 +5885,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         }
 
         // Trigger input event to notify any listeners
-        const inputEvent = new Event('input', { bubbles: true });
-        textEditor.dispatchEvent(inputEvent);
+        textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+        textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        // Resize textarea to fit new content
+        resizeTextareaToFit(textEditor);
+        
+        // Force layout recalculation
+        void textEditor.offsetHeight;
 
         // Enable undo button
         const undoButton = document.getElementById('genius-undo-replace-button');
@@ -6532,6 +6538,37 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         return matches;
     }
 
+    // Helper function to resize textarea to fit content
+    function resizeTextareaToFit(textarea) {
+        if (textarea.tagName === 'TEXTAREA') {
+            // Store current style
+            const currentHeight = textarea.style.height;
+            const currentOverflow = textarea.style.overflow;
+            
+            // Hide scrollbar temporarily
+            textarea.style.overflow = 'hidden';
+            
+            // Reset height to auto to get proper scrollHeight
+            textarea.style.height = 'auto';
+            
+            // Set to scrollHeight + small buffer to accommodate all content
+            textarea.style.height = (textarea.scrollHeight + 2) + 'px';
+            
+            // Restore overflow
+            textarea.style.overflow = currentOverflow || '';
+            
+            // Force a reflow
+            void textarea.offsetHeight;
+            
+            // For Firefox, also trigger on next frame
+            requestAnimationFrame(() => {
+                textarea.style.height = 'auto';
+                textarea.style.height = (textarea.scrollHeight + 2) + 'px';
+                void textarea.offsetHeight;
+            });
+        }
+    }
+
     function applyInteractiveChange(textEditor, match) {
         if (!textEditor || !match) return false;
 
@@ -6549,6 +6586,13 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
             textEditor.value = newValue;
             textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // Resize textarea to fit new content
+            resizeTextareaToFit(textEditor);
+            
+            // Force layout recalculation
+            void textEditor.offsetHeight;
             return true;
         }
 
@@ -6566,6 +6610,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
             textEditor.textContent = newContent;
             textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+            textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // Force layout recalculation
+            void textEditor.offsetHeight;
             return true;
         }
 
@@ -7874,6 +7922,27 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             textEditor.addEventListener('scroll', syncOverlay);
             syncOverlay();
 
+            // Update overlay position and size on resize
+            const updateOverlayPosition = () => {
+                overlay.style.left = textEditor.offsetLeft + 'px';
+                overlay.style.top = textEditor.offsetTop + 'px';
+                overlay.style.width = textEditor.offsetWidth + 'px';
+                overlay.style.height = textEditor.offsetHeight + 'px';
+                syncOverlay();
+            };
+            
+            // Use ResizeObserver for better resize detection
+            let resizeObserver = null;
+            if (typeof ResizeObserver !== 'undefined') {
+                resizeObserver = new ResizeObserver(() => {
+                    updateOverlayPosition();
+                });
+                resizeObserver.observe(textEditor);
+            }
+            
+            // Fallback to window resize event
+            window.addEventListener('resize', updateOverlayPosition);
+
             // Update overlay content when user types
             const updateOverlay = () => {
                 overlay.innerHTML = buildHighlightHTML(textEditor.value);
@@ -7883,6 +7952,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
             textEditor._highlightOverlay = overlay;
             textEditor._overlayScrollHandler = syncOverlay;
+            textEditor._overlayResizeHandler = updateOverlayPosition;
+            textEditor._overlayResizeObserver = resizeObserver;
             textEditor._inputHandler = updateOverlay;
             textEditor.classList.add('genius-highlighting-active');
 
@@ -8014,6 +8085,16 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             if (textEditor._overlayScrollHandler) {
                 textEditor.removeEventListener('scroll', textEditor._overlayScrollHandler);
                 delete textEditor._overlayScrollHandler;
+            }
+            
+            if (textEditor._overlayResizeHandler) {
+                window.removeEventListener('resize', textEditor._overlayResizeHandler);
+                delete textEditor._overlayResizeHandler;
+            }
+            
+            if (textEditor._overlayResizeObserver) {
+                textEditor._overlayResizeObserver.disconnect();
+                delete textEditor._overlayResizeObserver;
             }
             
             if (textEditor._inputHandler) {
@@ -8269,7 +8350,21 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 const lengthDiff = fixedText.length - text.length;
                 textEditor.selectionStart = textEditor.selectionEnd = Math.max(0, cursorPos + lengthDiff);
 
+                // Dispatch multiple events to ensure page responds
                 textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+                textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+                
+                // Resize textarea to fit new content
+                resizeTextareaToFit(textEditor);
+                
+                // Force layout recalculation by triggering a reflow
+                void textEditor.offsetHeight;
+                
+                // Scroll to ensure cursor is visible (helps with layout updates)
+                textEditor.scrollTop = textEditor.scrollTop;
+                
+                // Trigger window resize to force page layout recalculation
+                window.dispatchEvent(new Event('resize'));
             } else if (textEditor.isContentEditable) {
                 const selection = window.getSelection();
                 const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
@@ -8290,6 +8385,13 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 }
 
                 textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+                textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+                
+                // Force layout recalculation
+                void textEditor.offsetHeight;
+                
+                // Trigger window resize to force page layout recalculation
+                window.dispatchEvent(new Event('resize'));
             }
 
             textAppliedToEditor = true;
@@ -8583,9 +8685,28 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         if (autoFixSettings.parenthesesFormatting) {
             console.log('Starting parentheses fixes...');
 
+        // Helper function to check if a match is an annotation [text](numbers)
+        function isAnnotation(fullMatch, offset, string) {
+            // Check if the match contains the annotation pattern: ](only digits)
+            const annotationPattern = /\]\([^\)]*\d[^\)]*\)(?:<\/[bi]>)?$/;
+            if (annotationPattern.test(fullMatch)) {
+                // Extract the parenthetical content to verify it's only digits
+                const parenContent = fullMatch.match(/\]\(([^\)]+)\)/);
+                if (parenContent && /^\d+$/.test(parenContent[1])) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // Handle nested formatting tags first (e.g., <i><b>(content)</b></i>)
         // This handles cases where we have nested tags with parentheses
-        fixedText = fixedText.replace(/<(i|b)><(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\2><\/\1>/gi, function(match, outerTag, innerTag, content) {
+        fixedText = fixedText.replace(/<(i|b)><(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\2><\/\1>/gi, function(match, outerTag, innerTag, content, offset, string) {
+            // Check if this is an annotation pattern
+            if (isAnnotation(match, offset, string)) {
+                return match; // Don't modify annotations
+            }
+            
             if (content.includes('(') && content.includes(')')) {
                 console.log('Processing nested formatting block:', match.substring(0, 50) + '...');
 
@@ -8635,7 +8756,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         // Handle complex single-tag multiline cases
         // Pattern: <b> or <i> that contains multiple parenthetical groups
-        fixedText = fixedText.replace(/<(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\1>/gi, function(match, tag, content) {
+        fixedText = fixedText.replace(/<(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\1>/gi, function(match, tag, content, offset, string) {
+            // Check if this is an annotation pattern
+            if (isAnnotation(match, offset, string)) {
+                return match; // Don't modify annotations
+            }
+            
             // If the content contains parentheses, process it
             if (content.includes('(') && content.includes(')')) {
                 console.log('Processing single-tag multiline formatting block:', match.substring(0, 50) + '...');
@@ -8685,24 +8811,47 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         });
 
         // Handle simple nested cases: <i><b>(content)</b></i> -> (<i><b>content</b></i>)
-        fixedText = fixedText.replace(/<(i|b)><(b|i)>\(([^)]*)\)<\/\2><\/\1>/gi, '(<$1><$2>$3</$2></$1>)');
+        fixedText = fixedText.replace(/<(i|b)><(b|i)>\(([^)]*)\)<\/\2><\/\1>/gi, function(match, outerTag, innerTag, content, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
+            return `(<${outerTag}><${innerTag}>${content}</${innerTag}></${outerTag}>)`;
+        });
 
         // Handle simple single parenthetical cases
         // Pattern: <b>(content)</b> or <i>(content)</i> -> (<b>content</b>) or (<i>content</i>)
-        fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, '(<$1>$2</$1>)');
+        fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
+            return `(<${tag}>${content}</${tag}>)`;
+        });
 
         // Handle edge case: <i>(content</i>) -> (<i>content</i>)
         // Pattern: tag starts with parenthesis but closing parenthesis is outside the tag
-        fixedText = fixedText.replace(/<(b|i)>\(([^<]*)<\/\1>\)/gi, '(<$1>$2</$1>)');
+        fixedText = fixedText.replace(/<(b|i)>\(([^<]*)<\/\1>\)/gi, function(match, tag, content, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
+            return `(<${tag}>${content}</${tag}>)`;
+        });
 
         // Handle edge case: (<i>content)</i> -> (<i>content</i>)
         // Pattern: opening parenthesis is outside tag but closing parenthesis is inside the tag
-        fixedText = fixedText.replace(/\(<(b|i)>([^<]*)\)<\/\1>/gi, '(<$1>$2</$1>)');
+        fixedText = fixedText.replace(/\(<(b|i)>([^<]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
+            return `(<${tag}>${content}</${tag}>)`;
+        });
 
         // Handle edge case: mixed parentheses with tags
         // Pattern: (<i>content</i>) -> (<i>content</i>) (already correct, but clean up any malformed versions)
         // This handles cases like: (<i>text) followed by </i> somewhere else
-        fixedText = fixedText.replace(/\(<(b|i)>([^<)]+)\)([^<]*)<\/\1>/gi, function(match, tag, content, afterParen) {
+        fixedText = fixedText.replace(/\(<(b|i)>([^<)]+)\)([^<]*)<\/\1>/gi, function(match, tag, content, afterParen, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
             // If there's content after the closing parenthesis but before the closing tag,
             // it means the parenthesis should be moved outside
             if (afterParen.trim() === '') {
@@ -8714,6 +8863,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Handle the reverse case: <i>content)</i> where opening paren is missing or outside
         // This catches orphaned closing parentheses inside tags and moves them outside
         fixedText = fixedText.replace(/<(b|i)>([^<(]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
+            if (isAnnotation(match, offset, string)) {
+                return match;
+            }
             // Check if there's an opening parenthesis before this tag in a reasonable range
             const beforeTag = string.substring(Math.max(0, offset - 50), offset);
             if (beforeTag.includes('(')) {
@@ -9799,6 +9951,28 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         });
         */
     }
+
+    // Function to remove hidden buttons with specific styling
+    function removeHiddenButtons() {
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(button => {
+            const style = button.getAttribute('style');
+            if (style) {
+                // Check for the exact style pattern (order-independent)
+                const hasWidth95 = style.includes('width: 95px') || style.includes('width:95px');
+                const hasDisplayFlex = style.includes('display: flex') || style.includes('display:flex');
+                const hasAlignCenter = style.includes('align-items: center') || style.includes('align-items:center');
+                const hasJustifyCenter = style.includes('justify-content: center') || style.includes('justify-content:center');
+                const hasVisibilityHidden = style.includes('visibility: hidden') || style.includes('visibility:hidden');
+                
+                if (hasWidth95 && hasDisplayFlex && hasAlignCenter && hasJustifyCenter && hasVisibilityHidden) {
+                    console.log('Removing hidden button with specific styling');
+                    button.remove();
+                }
+            }
+        });
+    }
+
     // Function to initialize the userscript
     function init() {
         // Only run on Genius pages
@@ -9813,9 +9987,13 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Remove the "How to Format Lyrics" explainer div
         removeFormatExplainerDiv();
 
+        // Remove hidden buttons with specific styling
+        removeHiddenButtons();
+
         // Set up observer to remove the div if it appears later
         const observer = new MutationObserver(() => {
             removeFormatExplainerDiv();
+            removeHiddenButtons();
         });
         observer.observe(document.body, { childList: true, subtree: true });
 
