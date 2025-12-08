@@ -11,8 +11,16 @@
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
+
+    // Don't run in iframes (like apple_music_player) - only run in the main/top frame
+    if (window.self !== window.top) {
+        console.log('🔧 ScribeTools: Skipping iframe context');
+        return;
+    }
+
+    console.log('🔧 Genius ScribeTools v4.21 loading...');
 
     let emDashEnabled = false;
     let toggleButton = null;
@@ -20,6 +28,7 @@
     let settingsPopup = null;
     let settingsBackdrop = null;
     let isInitialized = false;
+    let isAddingButtons = false; // Flag to prevent duplicate button creation
     let formatPopup = null;
     let currentSelection = null;
     let popupTimeout = null;
@@ -42,9 +51,7 @@
         parenthesesFormatting: true,
         bracketHighlighting: true,
         emDashFixes: true,
-        capitalizeParentheses: true,
         multipleSpaces: true,
-        numberToText: 'ask', // Options: 'off', 'ask', 'on' - default to 'ask' for user control
         customRegex: true,
         customRegexRules: [], // Array of {find: string, replace: string, description: string, flags: string, enabled: boolean}
         emDashEnabled: false, // Save em dash toggle state
@@ -55,17 +62,25 @@
         ruleGroups: [], // Array of {id: string, title: string, description: string, author: string, version: string, rules: array}
         ungroupedRules: [], // Rules not assigned to any group
         persistentAutoSave: false,
-        groupFixesByRule: false // Group autofix prompts by rule instead of one at a time
+        groupFixesByRule: false, // Group autofix prompts by rule instead of one at a time
+        useCustomEditor: false, // Enable custom lyrics editor overlay with enhanced styling
+        blockSaveShortcuts: false, // Block shift+enter and control+L shortcuts to prevent accidental saves
+        // Language/dialect manual override settings
+        manualLanguage: null, // null = auto-detect, or a language code like 'en', 'es', etc.
+        manualDialect: null   // null = auto-detect, or a dialect code like 'US', 'UK', etc.
     };
 
     // Autoscribe settings
     let autoscribeSettings = {
         musicAiApiKey: '',
-        formattingProvider: 'gemini', // Options: 'gemini', 'deepseek', 'none'
+        workflow: 'transcription', // Options: 'transcription', 'transcriptionnosep'
+        formattingProvider: 'gemini', // Options: 'gemini', 'deepseek', 'openrouter', 'none'
         geminiApiKey: '',
-        geminiModel: 'gemini-2.5-flash', // Options: 'gemini-2.5-flash', 'gemini-2.5-pro'
+        geminiModel: 'gemini-2.5-flash', // Options: 'gemini-2.5-flash', 'gemini-3-pro-preview'
         deepseekApiKey: '',
         deepseekModel: 'deepseek-chat', // Options: 'deepseek-chat', 'deepseek-reasoner'
+        openrouterApiKey: '',
+        openrouterModel: 'google/gemini-2.0-flash-exp', // Options for Gemini models via OpenRouter
         useFormatting: true, // Master toggle
         useHeaders: true // Toggle for song part headers
     };
@@ -286,13 +301,13 @@
                 });
             }
 
-            element.addEventListener('mouseenter', function() {
+            element.addEventListener('mouseenter', function () {
                 Object.entries(hoverStyles).forEach(([key, value]) => {
                     this.style[key] = value;
                 });
             });
 
-            element.addEventListener('mouseleave', function() {
+            element.addEventListener('mouseleave', function () {
                 Object.entries(originalStyles).forEach(([key, value]) => {
                     this.style[key] = value;
                 });
@@ -470,7 +485,7 @@
                 replaceText = `<span style="color: #6f42c1; font-family: monospace; font-size: 11px; display: block; white-space: pre-wrap; max-width: 100%; overflow-wrap: break-word;">[Function]<br>${funcCode}</span>`;
             } else if (typeof rule.replace === 'string') {
                 replaceText = rule.replace;
-                
+
                 if (rule.replace.includes('\\')) {
                     let jsReplacement = rule.replace.replace(/(?<!\\)\\(\d+)/g, '$$$1');
                     if (jsReplacement !== rule.replace) {
@@ -585,7 +600,7 @@
         `;
 
         // Add hover effects like Genius buttons
-        button.addEventListener('mouseenter', function() {
+        button.addEventListener('mouseenter', function () {
             button.style.backgroundColor = '#000';
             button.style.color = '#fff';
             // Make settings icon more visible on hover
@@ -593,7 +608,7 @@
             if (settingsIcon) settingsIcon.style.opacity = '1';
         });
 
-        button.addEventListener('mouseleave', function() {
+        button.addEventListener('mouseleave', function () {
             updateButtonState(); // Reset to proper state colors
             // Reset settings icon opacity
             const settingsIcon = button.querySelector('.settings-icon');
@@ -601,7 +616,7 @@
         });
 
         // Combined click functionality
-        button.addEventListener('click', function(e) {
+        button.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -671,7 +686,7 @@
         popup.id = 'genius-dash-settings-popup';
 
         // Create header using utility
-        const header = UI.createPopupHeader('Dash Settings', () => {
+        const header = UI.createPopupHeader('Dash & Misc. Settings', () => {
             backdrop.style.display = 'none';
             popup.style.display = 'none';
         });
@@ -725,11 +740,11 @@
                 transition: background-color 0.2s ease;
             `;
 
-            container.addEventListener('mouseenter', function() {
+            container.addEventListener('mouseenter', function () {
                 this.style.backgroundColor = '#f8f9fa';
             });
 
-            container.addEventListener('mouseleave', function() {
+            container.addEventListener('mouseleave', function () {
                 this.style.backgroundColor = 'transparent';
             });
 
@@ -770,7 +785,7 @@
                 dropdown.appendChild(optionEl);
             });
 
-            dropdown.addEventListener('change', function() {
+            dropdown.addEventListener('change', function () {
                 autoFixSettings[setting.key] = this.value;
                 saveSettings();
 
@@ -784,6 +799,62 @@
             container.appendChild(dropdown);
             content.appendChild(container);
         });
+
+        // Add checkbox for blocking save shortcuts
+        const shortcutContainer = document.createElement('div');
+        shortcutContainer.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            padding: 8px;
+            border-radius: 6px;
+            transition: background-color 0.2s ease;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+        `;
+
+        shortcutContainer.addEventListener('mouseenter', function () {
+            this.style.backgroundColor = '#f8f9fa';
+        });
+
+        shortcutContainer.addEventListener('mouseleave', function () {
+            this.style.backgroundColor = 'transparent';
+        });
+
+        const shortcutCheckbox = document.createElement('input');
+        shortcutCheckbox.type = 'checkbox';
+        shortcutCheckbox.id = 'dash-setting-blockSaveShortcuts';
+        shortcutCheckbox.checked = autoFixSettings.blockSaveShortcuts;
+        shortcutCheckbox.style.cssText = `
+            margin-right: 12px;
+            margin-top: 2px;
+            cursor: pointer;
+            width: 16px;
+            height: 16px;
+        `;
+
+        shortcutCheckbox.addEventListener('change', function () {
+            autoFixSettings.blockSaveShortcuts = this.checked;
+            saveSettings();
+        });
+
+        const shortcutLabel = document.createElement('label');
+        shortcutLabel.htmlFor = 'dash-setting-blockSaveShortcuts';
+        shortcutLabel.textContent = 'Block save shortcuts (prevents Shift+Enter and Ctrl+L)';
+        shortcutLabel.style.cssText = `
+            font-size: 14px;
+            cursor: pointer;
+            color: #444;
+            line-height: 1.4;
+            flex: 1;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+
+        shortcutContainer.appendChild(shortcutCheckbox);
+        shortcutContainer.appendChild(shortcutLabel);
+        content.appendChild(shortcutContainer);
 
         return content;
     }
@@ -892,7 +963,7 @@
                 // Show/hide content
                 defaultContentEl.style.display = 'block';
                 customContentEl.style.display = 'none';
-                
+
                 // Set narrow width for default settings
                 if (popup) {
                     popup.style.width = '500px';
@@ -908,7 +979,7 @@
                 // Show/hide content
                 defaultContentEl.style.display = 'none';
                 customContentEl.style.display = 'block';
-                
+
                 // Set wide width for custom rules
                 if (popup) {
                     popup.style.width = '1400px';
@@ -928,18 +999,11 @@
             { key: 'parenthesesFormatting', label: 'Fix parentheses formatting', type: 'checkbox' },
             { key: 'bracketHighlighting', label: 'Highlight mismatched brackets', type: 'checkbox' },
             { key: 'emDashFixes', label: 'Convert word- to word— / word–', type: 'checkbox' },
-            { key: 'capitalizeParentheses', label: 'Capitalize first letter in parentheses', type: 'checkbox' },
-            { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
-            { key: 'persistentAutoSave', label: 'Keep auto-saved drafts after Save / Save & Exit', type: 'checkbox' },
-            { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja-)', type: 'checkbox' },
 
-            { key: 'numberToText', label: 'Convert numbers to text', type: 'dropdown',
-              options: [
-                  { value: 'off', label: 'Off' },
-                  { value: 'ask', label: 'Ask for each number' },
-                  { value: 'on', label: 'Convert automatically' }
-              ]
-            },
+            { key: 'customRegex', label: 'Enable custom regex rules', type: 'checkbox' },
+            { key: 'stutterEmDash', label: 'Fix stutter formatting (Ja— ja— ja— → Ja-ja-ja—)', type: 'checkbox' },
+            { key: 'persistentAutoSave', label: 'Keep auto-saved drafts after Save / Save & Exit', type: 'checkbox' },
+            { key: 'useCustomEditor', label: 'Enable custom lyrics editor overlay (alpha, buggy!)', type: 'checkbox' },
             { key: 'groupFixesByRule', label: 'Group autofix prompts by rule (show all fixes at once)', type: 'checkbox' }
         ];
 
@@ -954,11 +1018,11 @@
                 transition: background-color 0.2s ease;
             `;
 
-            container.addEventListener('mouseenter', function() {
+            container.addEventListener('mouseenter', function () {
                 this.style.backgroundColor = '#f8f9fa';
             });
 
-            container.addEventListener('mouseleave', function() {
+            container.addEventListener('mouseleave', function () {
                 this.style.backgroundColor = 'transparent';
             });
 
@@ -1000,7 +1064,7 @@
                     dropdown.appendChild(optionEl);
                 });
 
-                dropdown.addEventListener('change', function() {
+                dropdown.addEventListener('change', function () {
                     autoFixSettings[setting.key] = this.value;
                     saveSettings();
                 });
@@ -1021,9 +1085,12 @@
                     height: 16px;
                 `;
 
-                checkbox.addEventListener('change', function() {
+                checkbox.addEventListener('change', function () {
                     autoFixSettings[setting.key] = this.checked;
                     saveSettings();
+                    if (setting.key === 'useCustomEditor') {
+                        applyCustomEditorSetting();
+                    }
                 });
 
                 const label = document.createElement('label');
@@ -1045,6 +1112,184 @@
 
             content.appendChild(container);
         });
+
+        // Add Language/Dialect Override Section
+        const langDialectSection = document.createElement('div');
+        langDialectSection.style.cssText = `
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #eee;
+        `;
+
+        const sectionTitle = document.createElement('div');
+        sectionTitle.textContent = 'Language & Dialect Override';
+        sectionTitle.style.cssText = `
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 12px;
+            font-family: 'Programme', Arial, sans-serif;
+        `;
+        langDialectSection.appendChild(sectionTitle);
+
+        const sectionDesc = document.createElement('div');
+        sectionDesc.textContent = 'Override auto-detected language/dialect for autofix rules. Use "Auto-detect" to let ScribeTools determine from page tags.';
+        sectionDesc.style.cssText = `
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 12px;
+            font-family: 'Programme', Arial, sans-serif;
+            line-height: 1.4;
+        `;
+        langDialectSection.appendChild(sectionDesc);
+
+        // Language selector
+        const langContainer = document.createElement('div');
+        langContainer.style.cssText = `
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 6px;
+        `;
+
+        const langLabel = document.createElement('label');
+        langLabel.textContent = 'Language:';
+        langLabel.style.cssText = `
+            font-size: 14px;
+            color: #444;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+            min-width: 80px;
+        `;
+
+        const langDropdown = document.createElement('select');
+        langDropdown.id = 'setting-manualLanguage';
+        langDropdown.style.cssText = `
+            margin-left: 12px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #fff;
+            font-family: 'Programme', Arial, sans-serif;
+            font-size: 13px;
+            flex: 1;
+            max-width: 200px;
+        `;
+
+        getAvailableLanguages().forEach(lang => {
+            const optionEl = document.createElement('option');
+            optionEl.value = lang.code || '';
+            optionEl.textContent = lang.name;
+            optionEl.selected = (autoFixSettings.manualLanguage || '') === (lang.code || '');
+            langDropdown.appendChild(optionEl);
+        });
+
+        // Dialect selector
+        const dialectContainer = document.createElement('div');
+        dialectContainer.style.cssText = `
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 6px;
+        `;
+
+        const dialectLabel = document.createElement('label');
+        dialectLabel.textContent = 'Dialect:';
+        dialectLabel.style.cssText = `
+            font-size: 14px;
+            color: #444;
+            font-weight: 100;
+            font-family: 'Programme', Arial, sans-serif;
+            min-width: 80px;
+        `;
+
+        const dialectDropdown = document.createElement('select');
+        dialectDropdown.id = 'setting-manualDialect';
+        dialectDropdown.style.cssText = `
+            margin-left: 12px;
+            cursor: pointer;
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background: #fff;
+            font-family: 'Programme', Arial, sans-serif;
+            font-size: 13px;
+            flex: 1;
+            max-width: 200px;
+        `;
+
+        getAvailableDialects().forEach(dialect => {
+            const optionEl = document.createElement('option');
+            optionEl.value = dialect.code || '';
+            optionEl.textContent = dialect.name;
+            optionEl.selected = (autoFixSettings.manualDialect || '') === (dialect.code || '');
+            dialectDropdown.appendChild(optionEl);
+        });
+
+        dialectDropdown.addEventListener('change', function () {
+            autoFixSettings.manualDialect = this.value || null;
+            saveSettings();
+            console.log(`🌍 Manual dialect override set to: ${this.value || 'Auto-detect'}`);
+        });
+
+        // Function to update dialect dropdown visibility based on selected language
+        const updateDialectVisibility = () => {
+            const selectedLang = langDropdown.value;
+            const isEnglish = selectedLang === 'en' || selectedLang === '';
+            
+            if (isEnglish) {
+                dialectContainer.style.display = 'flex';
+                dialectDropdown.disabled = false;
+                dialectDropdown.style.opacity = '1';
+                dialectLabel.style.opacity = '1';
+            } else {
+                dialectContainer.style.display = 'flex';
+                dialectDropdown.disabled = true;
+                dialectDropdown.style.opacity = '0.5';
+                dialectLabel.style.opacity = '0.5';
+                // Clear dialect if not English
+                if (autoFixSettings.manualDialect) {
+                    autoFixSettings.manualDialect = null;
+                    dialectDropdown.value = '';
+                    saveSettings();
+                }
+            }
+        };
+
+        langDropdown.addEventListener('change', function () {
+            autoFixSettings.manualLanguage = this.value || null;
+            saveSettings();
+            console.log(`🌍 Manual language override set to: ${this.value || 'Auto-detect'}`);
+            updateDialectVisibility();
+        });
+
+        langContainer.appendChild(langLabel);
+        langContainer.appendChild(langDropdown);
+        langDialectSection.appendChild(langContainer);
+
+        dialectContainer.appendChild(dialectLabel);
+        dialectContainer.appendChild(dialectDropdown);
+        langDialectSection.appendChild(dialectContainer);
+
+        // Initialize dialect visibility based on current language setting
+        updateDialectVisibility();
+
+        // Add note about dialect
+        const dialectNote = document.createElement('div');
+        dialectNote.textContent = 'Note: Dialect primarily affects English spelling variations (color/colour, etc.)';
+        dialectNote.style.cssText = `
+            font-size: 11px;
+            color: #888;
+            font-style: italic;
+            font-family: 'Programme', Arial, sans-serif;
+            padding: 0 8px;
+        `;
+        langDialectSection.appendChild(dialectNote);
+
+        content.appendChild(langDialectSection);
 
         return content;
     }
@@ -1120,7 +1365,7 @@
             background: #f8f9fa;
         `;
 
-                 const title = document.createElement('h5');
+        const title = document.createElement('h5');
         title.textContent = 'Add New Regex Rule';
         title.style.cssText = `
             margin: 0 0 16px 0;
@@ -1191,7 +1436,7 @@
             gap: 8px;
         `;
 
-                         const saveBtn = createSmallButton('Add Rule', () => {
+        const saveBtn = createSmallButton('Add Rule', () => {
             const description = descriptionField.querySelector('input').value;
             const find = findField.querySelector('input').value;
             const replace = replaceField.querySelector('input').value;
@@ -1407,7 +1652,7 @@
         }
 
         const hasAnyRules = (autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0) ||
-                           (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0);
+            (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0);
 
         if (!hasAnyRules) {
             const noRulesMsg = document.createElement('div');
@@ -1454,7 +1699,7 @@
     // Function to create a rule group element (Professional Table Style)
     function createRuleGroupElement(group, groupIndex) {
         const color = getPastelColor(groupIndex);
-        
+
         const groupContainer = document.createElement('div');
         groupContainer.style.cssText = `
             border: 1px solid #e1e4e8;
@@ -1466,11 +1711,11 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.08);
             transition: box-shadow 0.2s ease;
         `;
-        
+
         groupContainer.addEventListener('mouseenter', () => {
             groupContainer.style.boxShadow = '0 2px 8px rgba(0,0,0,0.12)';
         });
-        
+
         groupContainer.addEventListener('mouseleave', () => {
             groupContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
         });
@@ -1625,11 +1870,11 @@
             gap: 12px;
             margin-bottom: 12px;
         `;
-        
+
         // Create rule cards
         group.rules.forEach((rule, ruleIndex) => {
             const ruleWrapper = document.createElement('div');
-            
+
             const ruleCard = document.createElement('div');
             ruleCard.style.cssText = `
                 background: ${color.bg};
@@ -1642,10 +1887,10 @@
                 transition: all 0.15s ease;
                 box-shadow: 0 1px 2px rgba(0,0,0,0.05);
             `;
-            
+
             const currentMode = rule.askMode || (rule.enabled === false ? 'off' : 'auto');
             ruleCard.style.opacity = currentMode === 'off' ? '0.6' : '1';
-            
+
             ruleCard.addEventListener('mouseenter', () => {
                 ruleCard.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
                 ruleCard.style.borderColor = color.accent;
@@ -1678,7 +1923,7 @@
                 font-family: 'Courier New', monospace;
                 margin-top: 4px;
             `;
-            
+
             const findPreview = document.createElement('div');
             findPreview.style.cssText = `
                 overflow: hidden;
@@ -1686,7 +1931,7 @@
                 white-space: nowrap;
             `;
             findPreview.innerHTML = `<span style="color: #959da5; font-weight: 600;">Find:</span> ${rule.find || ''}`;
-            
+
             const replacePreview = document.createElement('div');
             replacePreview.style.cssText = `
                 overflow: hidden;
@@ -1695,7 +1940,7 @@
             `;
             const replaceText = typeof rule.replace === 'function' ? '[Function]' : rule.replace || '';
             replacePreview.innerHTML = `<span style="color: #959da5; font-weight: 600;">Replace:</span> ${replaceText}`;
-            
+
             previewContainer.appendChild(findPreview);
             previewContainer.appendChild(replacePreview);
 
@@ -1721,17 +1966,17 @@
                 font-weight: 500;
                 color: #24292e;
             `;
-            
+
             ruleMode.innerHTML = `
                 <option value="auto" ${currentMode === 'auto' ? 'selected' : ''}>✓ Auto</option>
                 <option value="ask" ${currentMode === 'ask' ? 'selected' : ''}>? Ask</option>
                 <option value="off" ${currentMode === 'off' ? 'selected' : ''}>✗ Off</option>
             `;
-            
+
             ruleMode.addEventListener('click', (e) => {
                 e.stopPropagation();
             });
-            
+
             ruleMode.addEventListener('change', (e) => {
                 e.stopPropagation();
                 const mode = ruleMode.value;
@@ -1772,12 +2017,12 @@
                 editBtn.style.background = 'white';
                 editBtn.style.borderColor = '#e1e4e8';
             });
-            
+
             // Create inline edit form
             const editForm = createInlineEditForm(rule, groupIndex, ruleIndex, false, ruleWrapper, color);
             editForm.style.display = 'none';
             editForm.style.gridColumn = '1 / -1'; // Span full width when editing
-            
+
             editBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 // Close any other open edit forms in this group
@@ -1796,16 +2041,16 @@
 
             bottomRow.appendChild(ruleMode);
             bottomRow.appendChild(editBtn);
-            
+
             ruleCard.appendChild(ruleDesc);
             ruleCard.appendChild(previewContainer);
             ruleCard.appendChild(bottomRow);
-            
+
             ruleWrapper.appendChild(ruleCard);
             ruleWrapper.appendChild(editForm);
             rulesContainer.appendChild(ruleWrapper);
         });
-        
+
         rulesGrid.appendChild(rulesContainer);
 
         // Expand/collapse functionality - entire header is clickable
@@ -1815,7 +2060,7 @@
             if (e.target === deleteBtn || deleteBtn.contains(e.target) || e.target === enableToggle) {
                 return;
             }
-            
+
             isExpanded = !isExpanded;
             rulesGrid.style.display = isExpanded ? 'block' : 'none';
             expandIndicator.style.transform = isExpanded ? 'rotate(180deg)' : 'rotate(0deg)';
@@ -1826,18 +2071,18 @@
 
         return groupContainer;
     }
-    
+
     // Function to create inline edit form with compact two-column grid layout
     function createInlineEditForm(rule, groupIndex, ruleIndex, isUngrouped, parentWrapper, color) {
         const editForm = document.createElement('div');
         editForm.className = 'edit-form';
         editForm.style.cssText = `
             padding: 16px;
-            background: #fafbfc;
-            border: 1px solid #e1e4e8;
+            background: ${color.bg};
+            border: 1px solid ${color.border};
             border-radius: 6px;
         `;
-        
+
         const formGrid = document.createElement('div');
         formGrid.style.cssText = `
             display: grid;
@@ -1845,25 +2090,33 @@
             gap: 12px 16px;
             margin-bottom: 12px;
         `;
-        
+
         // Description field (full width)
         const descField = createFormFieldInline('Description', 'text', rule.description || '');
         descField.style.gridColumn = '1 / -1';
-        
+        descField.querySelector('label').style.color = color.text;
+        descField.querySelector('input').style.borderColor = color.border;
+
         // Find field (full width)
         const findField = createFormFieldInline('Find Pattern', 'text', rule.find || '');
         findField.style.gridColumn = '1 / -1';
-        
+        findField.querySelector('label').style.color = color.text;
+        findField.querySelector('input').style.borderColor = color.border;
+
         // Replace field (full width, textarea)
-        const replaceField = createFormFieldInline('Replace With', 'textarea', 
-            typeof rule.replace === 'function' ? rule.replace.toString() : 
-            typeof rule.replace === 'string' ? rule.replace : '', true);
+        const replaceField = createFormFieldInline('Replace With', 'textarea',
+            typeof rule.replace === 'function' ? rule.replace.toString() :
+                typeof rule.replace === 'string' ? rule.replace : '', true);
         replaceField.style.gridColumn = '1 / -1';
-        
+        replaceField.querySelector('label').style.color = color.text;
+        replaceField.querySelector('textarea').style.borderColor = color.border;
+
         // Flags field (flexible width - takes remaining space)
         const flagsField = createFormFieldInline('Flags', 'text', rule.flags || 'gi');
         flagsField.style.gridColumn = '1 / 2';
-        
+        flagsField.querySelector('label').style.color = color.text;
+        flagsField.querySelector('input').style.borderColor = color.border;
+
         // Enhanced boundary checkbox
         const enhancedContainer = document.createElement('div');
         enhancedContainer.style.cssText = `
@@ -1872,17 +2125,17 @@
             gap: 6px;
             grid-column: '2 / 3';
         `;
-        
+
         const enhancedLabelTop = document.createElement('label');
         enhancedLabelTop.textContent = 'Enhanced Boundary';
         enhancedLabelTop.style.cssText = `
             font-size: 12px;
             font-weight: 600;
-            color: #24292e;
+            color: ${color.text};
             text-transform: uppercase;
             letter-spacing: 0.5px;
         `;
-        
+
         const enhancedCheckboxContainer = document.createElement('div');
         enhancedCheckboxContainer.style.cssText = `
             display: flex;
@@ -1890,11 +2143,11 @@
             gap: 8px;
             padding: 8px 12px;
             background: white;
-            border: 1px solid #d1d5da;
+            border: 1px solid ${color.border};
             border-radius: 4px;
             height: 38px;
         `;
-        
+
         const enhancedCheckbox = document.createElement('input');
         enhancedCheckbox.type = 'checkbox';
         enhancedCheckbox.checked = rule.enhancedBoundary || false;
@@ -1904,31 +2157,53 @@
             cursor: pointer;
             margin: 0;
         `;
-        
+
         const enhancedLabel = document.createElement('label');
         enhancedLabel.textContent = 'Enabled';
         enhancedLabel.style.cssText = `
             font-size: 13px;
-            color: #24292e;
+            color: ${color.text};
             cursor: pointer;
             user-select: none;
         `;
-        
+
         enhancedLabel.addEventListener('click', () => {
             enhancedCheckbox.checked = !enhancedCheckbox.checked;
         });
-        
+
         enhancedCheckboxContainer.appendChild(enhancedCheckbox);
         enhancedCheckboxContainer.appendChild(enhancedLabel);
         enhancedContainer.appendChild(enhancedLabelTop);
         enhancedContainer.appendChild(enhancedCheckboxContainer);
-        
+
+        // Language field (optional)
+        const languageValue = rule.language ? (Array.isArray(rule.language) ? rule.language.join(', ') : rule.language) : '';
+        const languageField = createFormFieldInline('Language (optional)', 'text', languageValue);
+        languageField.style.gridColumn = '1 / 2';
+        languageField.querySelector('label').style.color = color.text;
+        const languageInput = languageField.querySelector('input');
+        languageInput.placeholder = 'e.g., en, es, fr';
+        languageInput.title = 'Restrict rule to specific languages. Comma-separated for multiple.';
+        languageInput.style.borderColor = color.border;
+
+        // Dialect field (optional)
+        const dialectValue = rule.dialect ? (Array.isArray(rule.dialect) ? rule.dialect.join(', ') : rule.dialect) : '';
+        const dialectField = createFormFieldInline('Dialect (optional)', 'text', dialectValue);
+        dialectField.style.gridColumn = '2 / 3';
+        dialectField.querySelector('label').style.color = color.text;
+        const dialectInput = dialectField.querySelector('input');
+        dialectInput.placeholder = 'e.g., uk, us, au';
+        dialectInput.title = 'Restrict rule to specific dialects. Comma-separated for multiple.';
+        dialectInput.style.borderColor = color.border;
+
         formGrid.appendChild(descField);
         formGrid.appendChild(findField);
         formGrid.appendChild(replaceField);
         formGrid.appendChild(flagsField);
         formGrid.appendChild(enhancedContainer);
-        
+        formGrid.appendChild(languageField);
+        formGrid.appendChild(dialectField);
+
         // Buttons
         const buttonContainer = document.createElement('div');
         buttonContainer.style.cssText = `
@@ -1936,7 +2211,7 @@
             gap: 8px;
             justify-content: flex-start;
         `;
-        
+
         const saveBtn = document.createElement('button');
         saveBtn.textContent = 'Save';
         saveBtn.style.cssText = `
@@ -1964,12 +2239,27 @@
             const replace = replaceField.querySelector('input, textarea').value.trim();
             const flags = flagsField.querySelector('input, textarea').value.trim();
             const enhancedBoundary = enhancedCheckbox.checked;
-            
+            const languageInputValue = languageField.querySelector('input').value.trim();
+            const dialectInputValue = dialectField.querySelector('input').value.trim();
+
             if (!find) {
                 alert('Find pattern is required.');
                 return;
             }
-            
+
+            // Parse language and dialect (comma-separated to array, or null if empty)
+            let language = null;
+            if (languageInputValue) {
+                const langs = languageInputValue.split(',').map(l => l.trim()).filter(l => l);
+                language = langs.length === 1 ? langs[0] : (langs.length > 1 ? langs : null);
+            }
+
+            let dialect = null;
+            if (dialectInputValue) {
+                const dialects = dialectInputValue.split(',').map(d => d.trim()).filter(d => d);
+                dialect = dialects.length === 1 ? dialects[0] : (dialects.length > 1 ? dialects : null);
+            }
+
             // Update the rule
             const updatedRule = {
                 ...rule,
@@ -1979,18 +2269,31 @@
                 flags: flags,
                 enhancedBoundary: enhancedBoundary
             };
-            
+
+            // Handle language/dialect (add if set, remove if empty)
+            if (language) {
+                updatedRule.language = language;
+            } else {
+                delete updatedRule.language;
+            }
+
+            if (dialect) {
+                updatedRule.dialect = dialect;
+            } else {
+                delete updatedRule.dialect;
+            }
+
             // Save to the appropriate location
             if (isUngrouped) {
                 autoFixSettings.ungroupedRules[ruleIndex] = updatedRule;
             } else {
                 autoFixSettings.ruleGroups[groupIndex].rules[ruleIndex] = updatedRule;
             }
-            
+
             saveSettings();
             refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
         });
-        
+
         const cancelBtn = document.createElement('button');
         cancelBtn.textContent = 'Cancel';
         cancelBtn.style.cssText = `
@@ -2017,16 +2320,16 @@
             const prevCard = parentWrapper.querySelector('div[style*="flex-direction: column"]');
             if (prevCard) prevCard.style.display = 'flex';
         });
-        
+
         buttonContainer.appendChild(saveBtn);
         buttonContainer.appendChild(cancelBtn);
-        
+
         editForm.appendChild(formGrid);
         editForm.appendChild(buttonContainer);
-        
+
         return editForm;
     }
-    
+
     // Helper function to create inline form fields
     function createFormFieldInline(label, type, value = '', isMonospace = false) {
         const container = document.createElement('div');
@@ -2035,7 +2338,7 @@
             flex-direction: column;
             gap: 6px;
         `;
-        
+
         const labelEl = document.createElement('label');
         labelEl.textContent = label;
         labelEl.style.cssText = `
@@ -2045,7 +2348,7 @@
             text-transform: uppercase;
             letter-spacing: 0.5px;
         `;
-        
+
         let input;
         if (type === 'textarea') {
             input = document.createElement('textarea');
@@ -2075,7 +2378,7 @@
             `;
         }
         input.value = value;
-        
+
         container.appendChild(labelEl);
         container.appendChild(input);
         return container;
@@ -2124,34 +2427,40 @@
             <span style="font-size: 11px; color: #999;">${autoFixSettings.ungroupedRules.length} rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}</span>
         `;
 
-        // Delete all unsorted rules button
-        const deleteAllBtn = createSmallButton('Delete All', () => {
-            if (confirm(`Are you sure you want to delete all ${autoFixSettings.ungroupedRules.length} unsorted rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}?`)) {
+        // Delete all unsorted rules button (X button like groups)
+        const deleteBtn = document.createElement('button');
+        deleteBtn.innerHTML = '×';
+        deleteBtn.title = 'Delete all unsorted rules';
+        deleteBtn.style.cssText = `
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            background: white;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            color: #cb2431;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+            line-height: 1;
+        `;
+        deleteBtn.addEventListener('mouseenter', () => {
+            deleteBtn.style.background = '#ffeef0';
+            deleteBtn.style.borderColor = '#cb2431';
+        });
+        deleteBtn.addEventListener('mouseleave', () => {
+            deleteBtn.style.background = 'white';
+            deleteBtn.style.borderColor = '#e1e4e8';
+        });
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm(`Delete all ${autoFixSettings.ungroupedRules.length} unsorted rule${autoFixSettings.ungroupedRules.length === 1 ? '' : 's'}?`)) {
                 autoFixSettings.ungroupedRules = [];
                 saveSettings();
                 refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
             }
-        });
-
-        // Set base styles for delete button with absolute positioning
-        deleteAllBtn.style.backgroundColor = '#dc3545';
-        deleteAllBtn.style.color = 'white';
-        deleteAllBtn.style.borderColor = '#dc3545';
-        deleteAllBtn.style.fontSize = '10px';
-        deleteAllBtn.style.padding = '2px 6px';
-        deleteAllBtn.style.position = 'absolute';
-        deleteAllBtn.style.top = '8px';
-        deleteAllBtn.style.right = '8px';
-        deleteAllBtn.style.zIndex = '10';
-
-        // Add proper hover effect using the UI utility
-        UI.addHoverEffect(deleteAllBtn, {
-            backgroundColor: '#c82333',
-            borderColor: '#bd2130'
-        }, {
-            backgroundColor: '#dc3545',
-            color: 'white',
-            borderColor: '#dc3545'
         });
 
         const toggleIcon = document.createElement('span');
@@ -2166,7 +2475,7 @@
         ungroupedInfo.appendChild(ungroupedMeta);
         ungroupedHeader.appendChild(ungroupedInfo);
         ungroupedHeader.appendChild(toggleIcon);
-        ungroupedHeader.appendChild(deleteAllBtn);
+        ungroupedHeader.appendChild(deleteBtn);
 
         // Rules container (initially hidden)
         const rulesContainer = document.createElement('div');
@@ -2179,8 +2488,8 @@
         let isExpanded = false;
 
         const toggleHandler = (e) => {
-            // Don't toggle if the delete all button was clicked
-            if (e.target === deleteAllBtn || deleteAllBtn.contains(e.target)) {
+            // Don't toggle if the delete button was clicked
+            if (e.target === deleteBtn || deleteBtn.contains(e.target)) {
                 return;
             }
 
@@ -2412,14 +2721,14 @@
         // Replace field (use textarea for better editing of functions)
         const replaceFieldContainer = document.createElement('div');
         replaceFieldContainer.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
-        
+
         const replaceLabel = document.createElement('label');
         replaceLabel.textContent = 'Replace With';
         replaceLabel.style.cssText = 'font-weight: 400; color: #333; font-family: Programme, Arial, sans-serif;';
-        
+
         const replaceInput = document.createElement('textarea');
-        replaceInput.value = typeof rule.replace === 'function' ? rule.replace.toString() : 
-                             typeof rule.replace === 'string' ? rule.replace : '';
+        replaceInput.value = typeof rule.replace === 'function' ? rule.replace.toString() :
+            typeof rule.replace === 'string' ? rule.replace : '';
         replaceInput.rows = 3;
         replaceInput.style.cssText = `
             padding: 8px 12px;
@@ -2432,7 +2741,7 @@
             resize: vertical;
             min-height: 60px;
         `;
-        
+
         replaceFieldContainer.appendChild(replaceLabel);
         replaceFieldContainer.appendChild(replaceInput);
         const replaceField = replaceFieldContainer;
@@ -2711,7 +3020,7 @@
 
 
 
-         // Function to create form fields
+    // Function to create form fields
     function createFormField(label, type, value = '') {
         const isMonospace = type === 'text' && (label.includes('Pattern') || label.includes('Replace'));
         return UI.createFormField(label, type, value, isMonospace);
@@ -2739,12 +3048,12 @@
             font-family: 'Programme', Arial, sans-serif;
         `;
 
-        dropdown.addEventListener('mouseenter', function() {
+        dropdown.addEventListener('mouseenter', function () {
             this.style.backgroundColor = '#e9ecef';
             this.style.borderColor = '#adb5bd';
         });
 
-        dropdown.addEventListener('mouseleave', function() {
+        dropdown.addEventListener('mouseleave', function () {
             this.style.backgroundColor = '#f8f9fa';
             this.style.borderColor = '#dee2e6';
         });
@@ -2768,7 +3077,7 @@
         dropdown.appendChild(fileOption);
         dropdown.appendChild(clipboardOption);
 
-        dropdown.addEventListener('change', function() {
+        dropdown.addEventListener('change', function () {
             const value = this.value;
             this.value = ''; // Reset to default
 
@@ -2788,12 +3097,12 @@
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
-        input.addEventListener('change', function(e) {
+        input.addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (!file) return;
 
             const reader = new FileReader();
-            reader.onload = function(e) {
+            reader.onload = function (e) {
                 processImportedData(e.target.result, 'file');
             };
             reader.readAsText(file);
@@ -2803,7 +3112,14 @@
     // Function to process imported data (common logic for both file and clipboard)
     function processImportedData(dataString, source) {
         try {
-            const importedData = JSON.parse(dataString);
+            // Clean up common JSON formatting issues (e.g., trailing commas)
+            let cleanedData = dataString.trim();
+            // Remove trailing comma after closing brace/bracket (e.g., {"key": "value",})
+            cleanedData = cleanedData.replace(/,(\s*[}\]])/g, '$1');
+            // Remove trailing comma at the very end of the string (e.g., {...},)
+            cleanedData = cleanedData.replace(/,\s*$/, '');
+
+            const importedData = JSON.parse(cleanedData);
             let importedRules = [];
             let hasGroupStructure = false;
 
@@ -2831,19 +3147,19 @@
                     // New format with metadata wrapper (like rules.json from GitHub)
                     // Create a rule group from the metadata
                     hasGroupStructure = true;
-                    
+
                     if (!autoFixSettings.ruleGroups) {
                         autoFixSettings.ruleGroups = [];
                     }
-                    
+
                     const validRules = importedData.rules
                         .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
                         .map(restoreFunction);
-                    
+
                     if (validRules.length > 0) {
                         // Check if this group already exists
                         const existingGroupIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === importedData.metadata.id);
-                        
+
                         if (existingGroupIndex >= 0) {
                             // Update existing group
                             const existingGroup = autoFixSettings.ruleGroups[existingGroupIndex];
@@ -2852,12 +3168,12 @@
                                     existingRule.find === newRule.find && existingRule.replace === newRule.replace
                                 )
                             );
-                            
+
                             if (newRules.length > 0) {
                                 existingGroup.rules.push(...newRules);
                                 existingGroup.version = importedData.metadata.version;
                             }
-                            
+
                             saveSettings();
                             refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
                             alert(`Added ${newRules.length} new rule${newRules.length === 1 ? '' : 's'} to existing group "${importedData.metadata.title}".`);
@@ -2871,7 +3187,7 @@
                                 version: importedData.metadata.version,
                                 rules: validRules
                             });
-                            
+
                             saveSettings();
                             refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
                             alert(`Successfully imported ${validRules.length} rule${validRules.length === 1 ? '' : 's'} in group "${importedData.metadata.title}".`);
@@ -2887,6 +3203,7 @@
                     // New export format with rule groups - preserve structure
                     hasGroupStructure = true;
                     let totalImported = 0;
+                    let totalProcessed = 0;
 
                     // Import rule groups and preserve their structure
                     if (importedData.ruleGroups && Array.isArray(importedData.ruleGroups)) {
@@ -2902,18 +3219,52 @@
                                     .map(restoreFunction);
 
                                 if (validGroupRules.length > 0) {
-                                    // Add the group with its validated rules and all metadata
-                                    autoFixSettings.ruleGroups.push({
-                                        id: group.id,
-                                        title: group.title || group.name || 'Imported Group',
-                                        name: group.name || group.title || 'Imported Group',
-                                        description: group.description || '',
-                                        author: group.author,
-                                        version: group.version,
-                                        enabled: group.enabled !== false,
-                                        rules: validGroupRules
-                                    });
-                                    totalImported += validGroupRules.length;
+                                    totalProcessed += validGroupRules.length;
+                                    
+                                    // Check if a group with the same name/title already exists
+                                    const groupName = group.title || group.name || 'Imported Group';
+                                    const existingGroupIndex = autoFixSettings.ruleGroups.findIndex(g => 
+                                        (g.title === groupName) || (g.name === groupName)
+                                    );
+
+                                    if (existingGroupIndex >= 0) {
+                                        // Update existing group - merge rules without duplicates
+                                        const existingGroup = autoFixSettings.ruleGroups[existingGroupIndex];
+                                        let addedCount = 0;
+                                        
+                                        validGroupRules.forEach(newRule => {
+                                            // Check if rule already exists (by find and replace patterns)
+                                            const isDuplicate = existingGroup.rules.some(existingRule =>
+                                                existingRule.find === newRule.find && existingRule.replace === newRule.replace
+                                            );
+                                            
+                                            if (!isDuplicate) {
+                                                existingGroup.rules.push(newRule);
+                                                addedCount++;
+                                            }
+                                        });
+                                        
+                                        // Update metadata if provided
+                                        if (group.description) existingGroup.description = group.description;
+                                        if (group.author) existingGroup.author = group.author;
+                                        if (group.version) existingGroup.version = group.version;
+                                        if (group.enabled !== undefined) existingGroup.enabled = group.enabled;
+                                        
+                                        totalImported += addedCount;
+                                    } else {
+                                        // Add new group
+                                        autoFixSettings.ruleGroups.push({
+                                            id: group.id,
+                                            title: group.title || group.name || 'Imported Group',
+                                            name: group.name || group.title || 'Imported Group',
+                                            description: group.description || '',
+                                            author: group.author,
+                                            version: group.version,
+                                            enabled: group.enabled !== false,
+                                            rules: validGroupRules
+                                        });
+                                        totalImported += validGroupRules.length;
+                                    }
                                 }
                             }
                         });
@@ -2929,8 +3280,22 @@
                             .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
                             .map(restoreFunction);
 
-                        autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validUngroupedRules];
-                        totalImported += validUngroupedRules.length;
+                        totalProcessed += validUngroupedRules.length;
+                        
+                        // Only add rules that don't already exist
+                        let addedCount = 0;
+                        validUngroupedRules.forEach(newRule => {
+                            const isDuplicate = autoFixSettings.ungroupedRules.some(existingRule =>
+                                existingRule.find === newRule.find && existingRule.replace === newRule.replace
+                            );
+                            
+                            if (!isDuplicate) {
+                                autoFixSettings.ungroupedRules.push(newRule);
+                                addedCount++;
+                            }
+                        });
+                        
+                        totalImported += addedCount;
                     }
 
                     // Import legacy rules
@@ -2943,18 +3308,34 @@
                             .filter(rule => rule && typeof rule === 'object' && rule.find && rule.replace)
                             .map(restoreFunction);
 
-                        autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validLegacyRules];
-                        totalImported += validLegacyRules.length;
+                        totalProcessed += validLegacyRules.length;
+                        
+                        // Only add rules that don't already exist
+                        let addedCount = 0;
+                        validLegacyRules.forEach(newRule => {
+                            const isDuplicate = autoFixSettings.ungroupedRules.some(existingRule =>
+                                existingRule.find === newRule.find && existingRule.replace === newRule.replace
+                            );
+                            
+                            if (!isDuplicate) {
+                                autoFixSettings.ungroupedRules.push(newRule);
+                                addedCount++;
+                            }
+                        });
+                        
+                        totalImported += addedCount;
                     }
 
-                    if (totalImported === 0) {
+                    if (totalImported === 0 && totalProcessed === 0) {
                         alert('No valid regex rules found in the data.');
                         return;
                     }
 
                     saveSettings();
                     refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
-                    alert(`Successfully imported ${totalImported} regex rule(s) from ${source}.`);
+                    const duplicatesSkipped = totalProcessed - totalImported;
+                    const message = `Successfully imported ${totalImported} regex rule(s) from ${source}${duplicatesSkipped > 0 ? ` (${duplicatesSkipped} duplicate(s) skipped)` : ''}.`;
+                    alert(message);
                     return;
                 } else {
                     alert(`Invalid format. Please ${source === 'file' ? 'select a valid JSON file' : 'copy valid JSON data'} containing regex rules.`);
@@ -2980,11 +3361,23 @@
             if (!autoFixSettings.ungroupedRules) {
                 autoFixSettings.ungroupedRules = [];
             }
-            autoFixSettings.ungroupedRules = [...autoFixSettings.ungroupedRules, ...validRules];
+            
+            // Only add rules that don't already exist
+            let addedCount = 0;
+            validRules.forEach(newRule => {
+                const isDuplicate = autoFixSettings.ungroupedRules.some(existingRule =>
+                    existingRule.find === newRule.find && existingRule.replace === newRule.replace
+                );
+                
+                if (!isDuplicate) {
+                    autoFixSettings.ungroupedRules.push(newRule);
+                    addedCount++;
+                }
+            });
 
             saveSettings();
             refreshCustomRegexRulesWithGroups(document.getElementById('custom-regex-rules-container'));
-            alert(`Successfully imported ${validRules.length} regex rule(s) from ${source}.`);
+            alert(`Successfully imported ${addedCount} regex rule(s) from ${source}${addedCount < validRules.length ? ` (${validRules.length - addedCount} duplicate(s) skipped)` : ''}.`);
         } catch (error) {
             alert(`Error parsing data from ${source}: ` + error.message);
         }
@@ -3428,21 +3821,65 @@
                 return;
             }
 
-            const matchingRules = autoFixSettings.customRegexRules.filter((rule, index) => {
+            // Collect all rules from different sources
+            let allRulesWithMetadata = [];
+
+            // Add rules from ruleGroups
+            if (autoFixSettings.ruleGroups && autoFixSettings.ruleGroups.length > 0) {
+                autoFixSettings.ruleGroups.forEach((group, groupIndex) => {
+                    if (group.rules && Array.isArray(group.rules)) {
+                        group.rules.forEach((rule, ruleIndex) => {
+                            allRulesWithMetadata.push({
+                                rule,
+                                source: 'group',
+                                groupIndex,
+                                ruleIndex,
+                                groupName: group.name,
+                                isBuiltIn: group.isBuiltIn
+                            });
+                        });
+                    }
+                });
+            }
+
+            // Add ungrouped rules
+            if (autoFixSettings.ungroupedRules && autoFixSettings.ungroupedRules.length > 0) {
+                autoFixSettings.ungroupedRules.forEach((rule, index) => {
+                    allRulesWithMetadata.push({
+                        rule,
+                        source: 'ungrouped',
+                        ruleIndex: index
+                    });
+                });
+            }
+
+            // Add legacy customRegexRules
+            if (autoFixSettings.customRegexRules && autoFixSettings.customRegexRules.length > 0) {
+                autoFixSettings.customRegexRules.forEach((rule, index) => {
+                    allRulesWithMetadata.push({
+                        rule,
+                        source: 'legacy',
+                        ruleIndex: index
+                    });
+                });
+            }
+
+            // Filter rules by search query
+            const matchingRules = allRulesWithMetadata.filter(({ rule }) => {
                 const description = (rule.description || '').toLowerCase();
                 const find = (rule.find || '').toLowerCase();
                 const replace = (typeof rule.replace === 'string' ? rule.replace : rule.replace.toString()).toLowerCase();
 
                 return description.includes(query) || find.includes(query) || replace.includes(query);
-            }).map((rule, originalIndex) => ({ rule, originalIndex: autoFixSettings.customRegexRules.indexOf(rule) }));
+            });
 
             if (matchingRules.length === 0) {
                 resultsContainer.innerHTML = '<div style="color: #666; font-style: italic; text-align: center; padding: 20px;">No rules found matching your search</div>';
                 return;
             }
 
-            matchingRules.forEach(({ rule, originalIndex }) => {
-                const ruleElement = createSearchResultElement(rule, originalIndex);
+            matchingRules.forEach((metadata) => {
+                const ruleElement = createSearchResultElementWithMetadata(metadata);
                 resultsContainer.appendChild(ruleElement);
             });
         }
@@ -3496,6 +3933,123 @@
             true // isSearchResult flag
         );
     }
+
+    // Function to create search result element with metadata (handles different sources)
+    function createSearchResultElementWithMetadata(metadata) {
+        const { rule, source, groupIndex, ruleIndex, groupName, isBuiltIn } = metadata;
+
+        // Create a display element with source info
+        const container = document.createElement('div');
+        container.style.marginBottom = '8px';
+
+        // Add source label if from a group
+        if (source === 'group' && groupName) {
+            const sourceLabel = document.createElement('div');
+            sourceLabel.style.cssText = `
+                font-size: 11px;
+                color: ${isBuiltIn ? '#2196F3' : '#999'};
+                margin-bottom: 4px;
+                font-weight: 500;
+            `;
+            sourceLabel.textContent = `📁 ${groupName}${isBuiltIn ? ' (Built-in)' : ''}`;
+            container.appendChild(sourceLabel);
+        } else if (source === 'ungrouped') {
+            const sourceLabel = document.createElement('div');
+            sourceLabel.style.cssText = `
+                font-size: 11px;
+                color: #999;
+                margin-bottom: 4px;
+            `;
+            sourceLabel.textContent = '📝 Unsorted Rules';
+            container.appendChild(sourceLabel);
+        }
+
+        // Create the rule element with appropriate callbacks based on source
+        let ruleElement;
+
+        if (source === 'group') {
+            ruleElement = UI.createRuleElement(rule, ruleIndex,
+                // onToggle
+                (idx, enabled) => {
+                    autoFixSettings.ruleGroups[groupIndex].rules[idx].enabled = enabled;
+                    saveSettings();
+                },
+                // onDelete
+                (idx) => {
+                    if (isBuiltIn) {
+                        alert('Cannot delete built-in rules. You can disable them instead.');
+                        return;
+                    }
+                    autoFixSettings.ruleGroups[groupIndex].rules.splice(idx, 1);
+                    saveSettings();
+                    // Refresh search results
+                    const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
+                    if (searchInput) {
+                        searchInput.dispatchEvent(new Event('input'));
+                    }
+                },
+                // onModeChange
+                (idx, mode) => {
+                    autoFixSettings.ruleGroups[groupIndex].rules[idx].askMode = mode;
+                    saveSettings();
+                },
+                true, // isSearchResult flag
+                isBuiltIn // readOnly flag for built-in rules
+            );
+        } else if (source === 'ungrouped') {
+            ruleElement = UI.createRuleElement(rule, ruleIndex,
+                // onToggle
+                (idx, enabled) => {
+                    autoFixSettings.ungroupedRules[idx].enabled = enabled;
+                    saveSettings();
+                },
+                // onDelete
+                (idx) => {
+                    autoFixSettings.ungroupedRules.splice(idx, 1);
+                    saveSettings();
+                    // Refresh search results
+                    const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
+                    if (searchInput) {
+                        searchInput.dispatchEvent(new Event('input'));
+                    }
+                },
+                // onModeChange
+                (idx, mode) => {
+                    autoFixSettings.ungroupedRules[idx].askMode = mode;
+                    saveSettings();
+                },
+                true // isSearchResult flag
+            );
+        } else { // legacy
+            ruleElement = UI.createRuleElement(rule, ruleIndex,
+                // onToggle
+                (idx, enabled) => {
+                    autoFixSettings.customRegexRules[idx].enabled = enabled;
+                    saveSettings();
+                },
+                // onDelete
+                (idx) => {
+                    autoFixSettings.customRegexRules.splice(idx, 1);
+                    saveSettings();
+                    // Refresh search results
+                    const searchInput = document.querySelector('#search-results-container').parentElement.querySelector('input[type="text"]');
+                    if (searchInput) {
+                        searchInput.dispatchEvent(new Event('input'));
+                    }
+                },
+                // onModeChange
+                (idx, mode) => {
+                    autoFixSettings.customRegexRules[idx].askMode = mode;
+                    saveSettings();
+                },
+                true // isSearchResult flag
+            );
+        }
+
+        container.appendChild(ruleElement);
+        return container;
+    }
+
 
     // Function to show download rules popup
     function showDownloadRulesPopup() {
@@ -3827,7 +4381,7 @@
             `;
 
             let replaceText = typeof rule.replace === 'string' ? rule.replace :
-                             typeof rule.replace === 'function' ? '[Function]' : rule.replace;
+                typeof rule.replace === 'function' ? '[Function]' : rule.replace;
 
             let enhancedBoundaryText = '';
             if (rule.enhancedBoundary && rule.flags && rule.flags.includes('e')) {
@@ -3877,7 +4431,7 @@
             if (!autoFixSettings.ruleGroups) {
                 autoFixSettings.ruleGroups = [];
             }
-            
+
             // Check if group already exists
             const existingGroupIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id);
 
@@ -4108,9 +4662,9 @@
                 console.error('Failed to fetch built-in rules:', response.status);
                 return;
             }
-            
+
             const data = await response.json();
-            
+
             // Helper function to restore functions from strings
             const restoreFunction = (rule) => {
                 if (typeof rule.replace === 'string') {
@@ -4125,23 +4679,23 @@
                 }
                 return rule;
             };
-            
+
             if (data.ruleGroups && Array.isArray(data.ruleGroups)) {
                 if (!autoFixSettings.ruleGroups) {
                     autoFixSettings.ruleGroups = [];
                 }
-                
+
                 // Process each rule group from rules.json
                 data.ruleGroups.forEach(group => {
                     // Check if this built-in group already exists
                     const existingIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id && g.isBuiltIn);
-                    
+
                     const processedGroup = {
                         ...group,
                         isBuiltIn: true, // Mark as built-in
                         rules: group.rules ? group.rules.map(restoreFunction) : []
                     };
-                    
+
                     if (existingIndex >= 0) {
                         // Update existing built-in group
                         autoFixSettings.ruleGroups[existingIndex] = processedGroup;
@@ -4150,7 +4704,7 @@
                         autoFixSettings.ruleGroups.push(processedGroup);
                     }
                 });
-                
+
                 console.log('Built-in rules loaded successfully from rules.json');
                 saveSettings();
             }
@@ -4209,7 +4763,7 @@
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = function(e) {
+        reader.onload = function (e) {
             try {
                 const jsonContent = e.target.result;
                 // Validate it's valid JSON
@@ -4559,20 +5113,20 @@
         `;
 
         // Add hover effects matching Genius button style
-        restoreBtn.addEventListener('mouseenter', function() {
+        restoreBtn.addEventListener('mouseenter', function () {
             this.style.backgroundColor = '#333';
         });
 
-        restoreBtn.addEventListener('mouseleave', function() {
+        restoreBtn.addEventListener('mouseleave', function () {
             this.style.backgroundColor = '#000';
         });
 
-        discardBtn.addEventListener('mouseenter', function() {
+        discardBtn.addEventListener('mouseenter', function () {
             this.style.backgroundColor = '#000';
             this.style.color = '#fff';
         });
 
-        discardBtn.addEventListener('mouseleave', function() {
+        discardBtn.addEventListener('mouseleave', function () {
             this.style.backgroundColor = 'transparent';
             this.style.color = '#000';
         });
@@ -4747,7 +5301,7 @@
         // Save every 30 seconds
         autoSaveInterval = setInterval(saveCurrentContent, 30000);
 
-                 // Also save on text input
+        // Also save on text input
         document.addEventListener('input', (e) => {
             const target = e.target;
             if (!isTextEntryElement(target)) return;
@@ -4772,7 +5326,7 @@
             autoSaveInputTimeouts.set(context.key, timeout);
         });
 
-                 // Listen for save/publish/cancel button clicks to clear auto-save
+        // Listen for save/publish/cancel button clicks to clear auto-save
         document.addEventListener('click', (e) => {
             const button = e.target.closest('button');
             if (button) {
@@ -4787,7 +5341,7 @@
                     // Quick follow-up for any editor-specific cleanup
                     setTimeout(() => {
                         const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+                            document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                         if (textEditor) {
                             removeInteractiveHighlight(textEditor);
                         }
@@ -4829,7 +5383,7 @@
                 // Clean up number conversion popup when Cancel or Save & Exit is clicked
                 if (buttonText.includes('cancel') || buttonText.includes('save') || buttonClasses.includes('iUzusl')) {
                     const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                                      document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+                        document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                     if (textEditor) {
                         // Always remove highlighting regardless of popup state
                         removeInteractiveHighlight(textEditor);
@@ -4909,7 +5463,7 @@
     // ===========================================
 
     // Function to upload file to Music.ai and get download URL
-    async function uploadFileToMusicAI(file, apiKey) {
+    async function uploadFileToMusicAI(file, apiKey, onProgress = null) {
         console.log('[Autoscribe] Starting file upload process for:', file.name);
         console.log('[Autoscribe] File size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
         console.log('[Autoscribe] File type:', file.type);
@@ -4949,26 +5503,41 @@
             console.log('[Autoscribe] Upload URL obtained successfully');
             console.log('[Autoscribe] Download URL:', downloadUrl);
 
-            // Step 2: Upload file to the provided URL
+            // Step 2: Upload file to the provided URL using XMLHttpRequest for progress tracking
             console.log('[Autoscribe] Uploading file to provided URL...');
-            const uploadResponse = await fetch(uploadUrl, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': file.type || 'application/octet-stream'
-                },
-                body: file
+            
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable && onProgress) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        onProgress(percentComplete);
+                    }
+                });
+                
+                xhr.addEventListener('load', () => {
+                    console.log('[Autoscribe] File upload response status:', xhr.status);
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        console.log('[Autoscribe] File uploaded successfully!');
+                        resolve();
+                    } else {
+                        console.error('[Autoscribe] File upload failed. Status:', xhr.status);
+                        console.error('[Autoscribe] Error response:', xhr.responseText);
+                        reject(new Error(`File upload failed: ${xhr.status} - ${xhr.responseText}`));
+                    }
+                });
+                
+                xhr.addEventListener('error', () => {
+                    console.error('[Autoscribe] File upload network error');
+                    reject(new Error('File upload failed: Network error'));
+                });
+                
+                xhr.open('PUT', uploadUrl);
+                xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+                xhr.send(file);
             });
 
-            console.log('[Autoscribe] File upload response status:', uploadResponse.status);
-
-            if (!uploadResponse.ok) {
-                const errorText = await uploadResponse.text();
-                console.error('[Autoscribe] File upload failed. Status:', uploadResponse.status);
-                console.error('[Autoscribe] Error response:', errorText);
-                throw new Error(`File upload failed: ${uploadResponse.status} - ${errorText}`);
-            }
-
-            console.log('[Autoscribe] File uploaded successfully!');
             return downloadUrl;
 
         } catch (error) {
@@ -4984,7 +5553,7 @@
         try {
             const jobPayload = {
                 name: 'Genius Autoscribe Transcription',
-                workflow: 'transcription',
+                workflow: autoscribeSettings.workflow || 'transcription',
                 params: {
                     inputUrl: downloadUrl
                 }
@@ -5029,7 +5598,7 @@
     }
 
     // Function to poll job status until completion
-    async function pollJobStatus(jobId, apiKey) {
+    async function pollJobStatus(jobId, apiKey, onProgress = null) {
         console.log('[Autoscribe] Starting to poll job status for ID:', jobId);
 
         const maxAttempts = 120; // 10 minutes max (120 * 5 seconds)
@@ -5038,6 +5607,15 @@
         while (attempt < maxAttempts) {
             attempt++;
             console.log(`[Autoscribe] Polling attempt ${attempt}/${maxAttempts}...`);
+            
+            // Calculate progress: starts at 5%, grows logarithmically to ~85% over time
+            // This gives a more realistic feel - fast initial progress, then slows down
+            const progressPercent = 5 + (80 * Math.log10(1 + attempt) / Math.log10(1 + maxAttempts));
+            
+            // Call progress callback if provided
+            if (onProgress) {
+                onProgress(attempt, maxAttempts, progressPercent);
+            }
 
             try {
                 const statusUrl = `https://api.music.ai/api/job/${jobId}`;
@@ -5110,11 +5688,11 @@
         // Formatting Toggle
         const formattingToggleContainer = document.createElement('div');
         formattingToggleContainer.style.cssText = 'margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;';
-        
+
         const formattingLabel = document.createElement('label');
         formattingLabel.textContent = 'Use AI Formatting';
         formattingLabel.style.cssText = 'font-weight: 500;';
-        
+
         const formattingToggle = document.createElement('input');
         formattingToggle.type = 'checkbox';
         formattingToggle.checked = autoscribeSettings.useFormatting;
@@ -5125,18 +5703,18 @@
             // Toggle visibility of provider-specific settings
             updateProviderVisibility();
         });
-        
+
         formattingToggleContainer.appendChild(formattingLabel);
         formattingToggleContainer.appendChild(formattingToggle);
 
         // Headers Toggle
         const headersToggleContainer = document.createElement('div');
         headersToggleContainer.style.cssText = 'margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between;';
-        
+
         const headersLabel = document.createElement('label');
         headersLabel.textContent = 'Use Song Part Headers';
         headersLabel.style.cssText = 'font-weight: 500;';
-        
+
         const headersToggle = document.createElement('input');
         headersToggle.type = 'checkbox';
         headersToggle.checked = autoscribeSettings.useHeaders;
@@ -5145,40 +5723,45 @@
             autoscribeSettings.useHeaders = headersToggle.checked;
             saveAutoscribeSettings();
         });
-        
+
         headersToggleContainer.appendChild(headersLabel);
         headersToggleContainer.appendChild(headersToggle);
 
         // Provider Selector
         const providerContainer = document.createElement('div');
         providerContainer.style.cssText = 'margin-bottom: 20px;';
-        
+
         const providerLabel = document.createElement('label');
         providerLabel.textContent = 'Formatting Provider';
         providerLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
-        
+
         const providerSelect = document.createElement('select');
         providerSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
-        
+
         const geminiOption = document.createElement('option');
         geminiOption.value = 'gemini';
         geminiOption.textContent = 'Google Gemini';
-        
+
         const deepseekOption = document.createElement('option');
         deepseekOption.value = 'deepseek';
         deepseekOption.textContent = 'DeepSeek (Cheaper & Faster)';
-        
+
+        const openrouterOption = document.createElement('option');
+        openrouterOption.value = 'openrouter';
+        openrouterOption.textContent = 'OpenRouter (Gemini via OpenRouter)';
+
         providerSelect.appendChild(geminiOption);
         providerSelect.appendChild(deepseekOption);
+        providerSelect.appendChild(openrouterOption);
         providerSelect.value = autoscribeSettings.formattingProvider;
-        
+
         providerSelect.addEventListener('change', () => {
             autoscribeSettings.formattingProvider = providerSelect.value;
             saveAutoscribeSettings();
             console.log('[Autoscribe] Provider changed to:', providerSelect.value);
             updateProviderVisibility();
         });
-        
+
         providerContainer.appendChild(providerLabel);
         providerContainer.appendChild(providerSelect);
 
@@ -5198,8 +5781,8 @@
         flashOption.textContent = 'Gemini 2.5 Flash (Faster, Cheaper)';
 
         const proOption = document.createElement('option');
-        proOption.value = 'gemini-2.5-pro';
-        proOption.textContent = 'Gemini 2.5 Pro (More Accurate)';
+        proOption.value = 'gemini-3-pro-preview';
+        proOption.textContent = 'Gemini 3 Pro (More Accurate)';
 
         modelSelect.appendChild(flashOption);
         modelSelect.appendChild(proOption);
@@ -5218,32 +5801,32 @@
         const deepseekModelContainer = document.createElement('div');
         deepseekModelContainer.style.cssText = 'margin-bottom: 20px;';
         deepseekModelContainer.className = 'deepseek-settings';
-        
+
         const deepseekModelLabel = document.createElement('label');
         deepseekModelLabel.textContent = 'DeepSeek Model';
         deepseekModelLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
-        
+
         const deepseekModelSelect = document.createElement('select');
         deepseekModelSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
-        
+
         const deepseekChatOption = document.createElement('option');
         deepseekChatOption.value = 'deepseek-chat';
         deepseekChatOption.textContent = 'DeepSeek Chat (Non-thinking Mode)';
-        
+
         const deepseekReasonerOption = document.createElement('option');
         deepseekReasonerOption.value = 'deepseek-reasoner';
         deepseekReasonerOption.textContent = 'DeepSeek Reasoner (Thinking Mode)';
-        
+
         deepseekModelSelect.appendChild(deepseekChatOption);
         deepseekModelSelect.appendChild(deepseekReasonerOption);
         deepseekModelSelect.value = autoscribeSettings.deepseekModel;
-        
+
         deepseekModelSelect.addEventListener('change', () => {
             autoscribeSettings.deepseekModel = deepseekModelSelect.value;
             saveAutoscribeSettings();
             console.log('[Autoscribe] DeepSeek model changed to:', deepseekModelSelect.value);
         });
-        
+
         deepseekModelContainer.appendChild(deepseekModelLabel);
         deepseekModelContainer.appendChild(deepseekModelSelect);
 
@@ -5272,11 +5855,11 @@
         const geminiContainer = document.createElement('div');
         geminiContainer.style.cssText = 'margin-bottom: 20px;';
         geminiContainer.className = 'gemini-settings';
-        
+
         const geminiKeyLabel = document.createElement('label');
         geminiKeyLabel.textContent = 'Gemini API Key';
         geminiKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
-        
+
         const geminiInput = document.createElement('input');
         geminiInput.type = 'password';
         geminiInput.value = autoscribeSettings.geminiApiKey;
@@ -5286,7 +5869,7 @@
             autoscribeSettings.geminiApiKey = geminiInput.value;
             saveAutoscribeSettings();
         });
-        
+
         geminiContainer.appendChild(geminiKeyLabel);
         geminiContainer.appendChild(geminiInput);
 
@@ -5294,11 +5877,11 @@
         const deepseekContainer = document.createElement('div');
         deepseekContainer.style.cssText = 'margin-bottom: 20px;';
         deepseekContainer.className = 'deepseek-settings';
-        
+
         const deepseekKeyLabel = document.createElement('label');
         deepseekKeyLabel.textContent = 'DeepSeek API Key';
         deepseekKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
-        
+
         const deepseekInput = document.createElement('input');
         deepseekInput.type = 'password';
         deepseekInput.value = autoscribeSettings.deepseekApiKey;
@@ -5308,9 +5891,101 @@
             autoscribeSettings.deepseekApiKey = deepseekInput.value;
             saveAutoscribeSettings();
         });
-        
+
         deepseekContainer.appendChild(deepseekKeyLabel);
         deepseekContainer.appendChild(deepseekInput);
+
+        // OpenRouter Model Selector
+        const openrouterModelContainer = document.createElement('div');
+        openrouterModelContainer.style.cssText = 'margin-bottom: 20px;';
+        openrouterModelContainer.className = 'openrouter-settings';
+
+        const openrouterModelLabel = document.createElement('label');
+        openrouterModelLabel.textContent = 'OpenRouter Model';
+        openrouterModelLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const openrouterModelSelect = document.createElement('select');
+        openrouterModelSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const openrouterFlashOption = document.createElement('option');
+        openrouterFlashOption.value = 'google/gemini-2.5-flash';
+        openrouterFlashOption.textContent = 'Gemini 2.5 Flash (via OpenRouter)';
+
+        const openrouterProOption = document.createElement('option');
+        openrouterProOption.value = 'google/gemini-3-pro-preview';
+        openrouterProOption.textContent = 'Gemini 3 Pro (via OpenRouter)';
+
+        const openrouterPro2Option = document.createElement('option');
+        openrouterPro2Option.value = 'x-ai/grok-4.1-fast';
+        openrouterPro2Option.textContent = 'Grok 4.1 Fast (via OpenRouter)';
+
+        openrouterModelSelect.appendChild(openrouterFlashOption);
+        openrouterModelSelect.appendChild(openrouterProOption);
+        openrouterModelSelect.appendChild(openrouterPro2Option);
+        openrouterModelSelect.value = autoscribeSettings.openrouterModel || 'google/gemini-3-pro-preview';
+
+        openrouterModelSelect.addEventListener('change', () => {
+            autoscribeSettings.openrouterModel = openrouterModelSelect.value;
+            saveAutoscribeSettings();
+            console.log('[Autoscribe] OpenRouter model changed to:', openrouterModelSelect.value);
+        });
+
+        openrouterModelContainer.appendChild(openrouterModelLabel);
+        openrouterModelContainer.appendChild(openrouterModelSelect);
+
+        // Workflow Selector
+        const workflowContainer = document.createElement('div');
+        workflowContainer.style.cssText = 'margin-bottom: 20px;';
+
+        const workflowLabel = document.createElement('label');
+        workflowLabel.textContent = 'Music.ai Workflow';
+        workflowLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const workflowSelect = document.createElement('select');
+        workflowSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const transcriptionOption = document.createElement('option');
+        transcriptionOption.value = 'transcription';
+        transcriptionOption.textContent = 'Isolate vocals, then transcr';
+
+        const transcriptionNosepOption = document.createElement('option');
+        transcriptionNosepOption.value = 'transcriptionnosep';
+        transcriptionNosepOption.textContent = 'Transcribe without vocal isolation';
+
+        workflowSelect.appendChild(transcriptionOption);
+        workflowSelect.appendChild(transcriptionNosepOption);
+        workflowSelect.value = autoscribeSettings.workflow || 'transcription';
+
+        workflowSelect.addEventListener('change', () => {
+            autoscribeSettings.workflow = workflowSelect.value;
+            saveAutoscribeSettings();
+            console.log('[Autoscribe] Workflow changed to:', workflowSelect.value);
+        });
+
+        workflowContainer.appendChild(workflowLabel);
+        workflowContainer.appendChild(workflowSelect);
+
+        // OpenRouter API Key
+        const openrouterContainer = document.createElement('div');
+        openrouterContainer.style.cssText = 'margin-bottom: 20px;';
+        openrouterContainer.className = 'openrouter-settings';
+
+        const openrouterKeyLabel = document.createElement('label');
+        openrouterKeyLabel.textContent = 'OpenRouter API Key';
+        openrouterKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const openrouterInput = document.createElement('input');
+        openrouterInput.type = 'password';
+        openrouterInput.value = autoscribeSettings.openrouterApiKey || '';
+        openrouterInput.placeholder = 'Enter your OpenRouter API key';
+        openrouterInput.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;';
+        openrouterInput.addEventListener('input', () => {
+            autoscribeSettings.openrouterApiKey = openrouterInput.value;
+            saveAutoscribeSettings();
+        });
+
+        openrouterContainer.appendChild(openrouterKeyLabel);
+        openrouterContainer.appendChild(openrouterInput);
 
         // Info text
         const infoText = document.createElement('p');
@@ -5327,9 +6002,12 @@
         content.appendChild(providerContainer);
         content.appendChild(modelContainer);
         content.appendChild(deepseekModelContainer);
+        content.appendChild(openrouterModelContainer);
+        content.appendChild(workflowContainer);
         content.appendChild(musicAiContainer);
         content.appendChild(geminiContainer);
         content.appendChild(deepseekContainer);
+        content.appendChild(openrouterContainer);
         content.appendChild(infoText);
         content.appendChild(pricingInfo);
         popup.appendChild(content);
@@ -5338,15 +6016,17 @@
         function updateProviderVisibility() {
             const isEnabled = autoscribeSettings.useFormatting;
             const provider = autoscribeSettings.formattingProvider;
-            
+
             providerContainer.style.display = isEnabled ? 'block' : 'none';
             modelContainer.style.display = (isEnabled && provider === 'gemini') ? 'block' : 'none';
             deepseekModelContainer.style.display = (isEnabled && provider === 'deepseek') ? 'block' : 'none';
+            openrouterModelContainer.style.display = (isEnabled && provider === 'openrouter') ? 'block' : 'none';
             geminiContainer.style.display = (isEnabled && provider === 'gemini') ? 'block' : 'none';
             deepseekContainer.style.display = (isEnabled && provider === 'deepseek') ? 'block' : 'none';
+            openrouterContainer.style.display = (isEnabled && provider === 'openrouter') ? 'block' : 'none';
             pricingInfo.style.display = isEnabled ? 'block' : 'none';
         }
-        
+
         // Set initial visibility
         updateProviderVisibility();
 
@@ -5356,14 +6036,463 @@
         return { backdrop, popup };
     }
 
+    // Function to create AI Fix settings popup (simpler than autoscribe - just API key and model)
+    function createAIFixSettingsPopup() {
+        const backdrop = UI.createBackdrop(() => {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+        backdrop.id = 'genius-aifix-settings-backdrop';
+
+        const popup = UI.createPopup();
+        popup.id = 'genius-aifix-settings-popup';
+
+        const header = UI.createPopupHeader('AI Fix Settings', () => {
+            backdrop.style.display = 'none';
+            popup.style.display = 'none';
+        });
+
+        popup.appendChild(header);
+
+        // Settings content
+        const content = document.createElement('div');
+        content.style.cssText = 'padding: 20px;';
+
+        // Provider Selector
+        const providerContainer = document.createElement('div');
+        providerContainer.style.cssText = 'margin-bottom: 20px;';
+
+        const providerLabel = document.createElement('label');
+        providerLabel.textContent = 'AI Provider';
+        providerLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const providerSelect = document.createElement('select');
+        providerSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const geminiOption = document.createElement('option');
+        geminiOption.value = 'gemini';
+        geminiOption.textContent = 'Google Gemini';
+
+        const deepseekOption = document.createElement('option');
+        deepseekOption.value = 'deepseek';
+        deepseekOption.textContent = 'DeepSeek (Cheaper & Faster)';
+
+        const openrouterOption = document.createElement('option');
+        openrouterOption.value = 'openrouter';
+        openrouterOption.textContent = 'OpenRouter (Gemini via OpenRouter)';
+
+        providerSelect.appendChild(geminiOption);
+        providerSelect.appendChild(deepseekOption);
+        providerSelect.appendChild(openrouterOption);
+        providerSelect.value = autoscribeSettings.formattingProvider;
+
+        providerSelect.addEventListener('change', () => {
+            autoscribeSettings.formattingProvider = providerSelect.value;
+            saveAutoscribeSettings();
+            console.log('[AI Fix] Provider changed to:', providerSelect.value);
+            updateProviderVisibility();
+        });
+
+        providerContainer.appendChild(providerLabel);
+        providerContainer.appendChild(providerSelect);
+
+        // Gemini Model Selector
+        const modelContainer = document.createElement('div');
+        modelContainer.style.cssText = 'margin-bottom: 20px;';
+        modelContainer.className = 'gemini-settings';
+
+        const modelLabel = document.createElement('label');
+        modelLabel.textContent = 'Gemini Model';
+        modelLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const modelSelect = document.createElement('select');
+        modelSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const flashOption = document.createElement('option');
+        flashOption.value = 'gemini-2.5-flash';
+        flashOption.textContent = 'Gemini 2.5 Flash (Faster, Cheaper)';
+
+        const proOption = document.createElement('option');
+        proOption.value = 'gemini-3-pro-preview';
+        proOption.textContent = 'Gemini 3 Pro (More Accurate)';
+
+        modelSelect.appendChild(flashOption);
+        modelSelect.appendChild(proOption);
+        modelSelect.value = autoscribeSettings.geminiModel;
+
+        modelSelect.addEventListener('change', () => {
+            autoscribeSettings.geminiModel = modelSelect.value;
+            saveAutoscribeSettings();
+            console.log('[AI Fix] Gemini model changed to:', modelSelect.value);
+        });
+
+        modelContainer.appendChild(modelLabel);
+        modelContainer.appendChild(modelSelect);
+
+        // DeepSeek Model Selector
+        const deepseekModelContainer = document.createElement('div');
+        deepseekModelContainer.style.cssText = 'margin-bottom: 20px;';
+        deepseekModelContainer.className = 'deepseek-settings';
+
+        const deepseekModelLabel = document.createElement('label');
+        deepseekModelLabel.textContent = 'DeepSeek Model';
+        deepseekModelLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const deepseekModelSelect = document.createElement('select');
+        deepseekModelSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const deepseekChatOption = document.createElement('option');
+        deepseekChatOption.value = 'deepseek-chat';
+        deepseekChatOption.textContent = 'DeepSeek Chat (Non-thinking Mode)';
+
+        const deepseekReasonerOption = document.createElement('option');
+        deepseekReasonerOption.value = 'deepseek-reasoner';
+        deepseekReasonerOption.textContent = 'DeepSeek Reasoner (Thinking Mode)';
+
+        deepseekModelSelect.appendChild(deepseekChatOption);
+        deepseekModelSelect.appendChild(deepseekReasonerOption);
+        deepseekModelSelect.value = autoscribeSettings.deepseekModel;
+
+        deepseekModelSelect.addEventListener('change', () => {
+            autoscribeSettings.deepseekModel = deepseekModelSelect.value;
+            saveAutoscribeSettings();
+            console.log('[AI Fix] DeepSeek model changed to:', deepseekModelSelect.value);
+        });
+
+        deepseekModelContainer.appendChild(deepseekModelLabel);
+        deepseekModelContainer.appendChild(deepseekModelSelect);
+
+        // Gemini API Key
+        const geminiContainer = document.createElement('div');
+        geminiContainer.style.cssText = 'margin-bottom: 20px;';
+        geminiContainer.className = 'gemini-settings';
+
+        const geminiKeyLabel = document.createElement('label');
+        geminiKeyLabel.textContent = 'Gemini API Key';
+        geminiKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const geminiInput = document.createElement('input');
+        geminiInput.type = 'password';
+        geminiInput.value = autoscribeSettings.geminiApiKey;
+        geminiInput.placeholder = 'Enter your Gemini API key';
+        geminiInput.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;';
+        geminiInput.addEventListener('input', () => {
+            autoscribeSettings.geminiApiKey = geminiInput.value;
+            saveAutoscribeSettings();
+        });
+
+        geminiContainer.appendChild(geminiKeyLabel);
+        geminiContainer.appendChild(geminiInput);
+
+        // DeepSeek API Key
+        const deepseekContainer = document.createElement('div');
+        deepseekContainer.style.cssText = 'margin-bottom: 20px;';
+        deepseekContainer.className = 'deepseek-settings';
+
+        const deepseekKeyLabel = document.createElement('label');
+        deepseekKeyLabel.textContent = 'DeepSeek API Key';
+        deepseekKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const deepseekInput = document.createElement('input');
+        deepseekInput.type = 'password';
+        deepseekInput.value = autoscribeSettings.deepseekApiKey;
+        deepseekInput.placeholder = 'Enter your DeepSeek API key';
+        deepseekInput.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;';
+        deepseekInput.addEventListener('input', () => {
+            autoscribeSettings.deepseekApiKey = deepseekInput.value;
+            saveAutoscribeSettings();
+        });
+
+        deepseekContainer.appendChild(deepseekKeyLabel);
+        deepseekContainer.appendChild(deepseekInput);
+
+        // OpenRouter Model Selector
+        const openrouterModelContainer = document.createElement('div');
+        openrouterModelContainer.style.cssText = 'margin-bottom: 20px;';
+        openrouterModelContainer.className = 'openrouter-settings';
+
+        const openrouterModelLabel = document.createElement('label');
+        openrouterModelLabel.textContent = 'OpenRouter Model';
+        openrouterModelLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const openrouterModelSelect = document.createElement('select');
+        openrouterModelSelect.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-family: inherit;';
+
+        const openrouterFlashOption = document.createElement('option');
+        openrouterFlashOption.value = 'google/gemini-2.5-flash';
+        openrouterFlashOption.textContent = 'Gemini 2.5 Flash (via OpenRouter)';
+
+        const openrouterProOption = document.createElement('option');
+        openrouterProOption.value = 'google/gemini-3-pro-preview';
+        openrouterProOption.textContent = 'Gemini 3 Pro (via OpenRouter)';
+
+        const openrouterPro2Option = document.createElement('option');
+        openrouterPro2Option.value = 'x-ai/grok-4.1-fast';
+        openrouterPro2Option.textContent = 'Grok 4.1 Fast (via OpenRouter)';
+
+        openrouterModelSelect.appendChild(openrouterFlashOption);
+        openrouterModelSelect.appendChild(openrouterProOption);
+        openrouterModelSelect.appendChild(openrouterPro2Option);
+        openrouterModelSelect.value = autoscribeSettings.openrouterModel || 'google/gemini-3-pro-preview';
+
+        openrouterModelSelect.addEventListener('change', () => {
+            autoscribeSettings.openrouterModel = openrouterModelSelect.value;
+            saveAutoscribeSettings();
+            console.log('[AI Fix] OpenRouter model changed to:', openrouterModelSelect.value);
+        });
+
+        openrouterModelContainer.appendChild(openrouterModelLabel);
+        openrouterModelContainer.appendChild(openrouterModelSelect);
+
+        // OpenRouter API Key
+        const openrouterContainer = document.createElement('div');
+        openrouterContainer.style.cssText = 'margin-bottom: 20px;';
+        openrouterContainer.className = 'openrouter-settings';
+
+        const openrouterKeyLabel = document.createElement('label');
+        openrouterKeyLabel.textContent = 'OpenRouter API Key';
+        openrouterKeyLabel.style.cssText = 'display: block; margin-bottom: 5px; font-weight: 500;';
+
+        const openrouterInput = document.createElement('input');
+        openrouterInput.type = 'password';
+        openrouterInput.value = autoscribeSettings.openrouterApiKey || '';
+        openrouterInput.placeholder = 'Enter your OpenRouter API key';
+        openrouterInput.style.cssText = 'width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace;';
+        openrouterInput.addEventListener('input', () => {
+            autoscribeSettings.openrouterApiKey = openrouterInput.value;
+            saveAutoscribeSettings();
+        });
+
+        openrouterContainer.appendChild(openrouterKeyLabel);
+        openrouterContainer.appendChild(openrouterInput);
+
+        // Info text
+        const infoText = document.createElement('p');
+        infoText.textContent = 'API keys are stored locally in your browser and synced with Autoscribe settings.';
+        infoText.style.cssText = 'font-size: 12px; color: #666; margin-top: 15px;';
+
+        // Pricing info
+        const pricingInfo = document.createElement('p');
+        pricingInfo.innerHTML = '<strong>Pricing:</strong> DeepSeek is ~10x cheaper than Gemini ($0.28/$1.10 vs $3.50/$10.50 per 1M tokens).';
+        pricingInfo.style.cssText = 'font-size: 12px; color: #666; margin-top: 10px;';
+
+        content.appendChild(providerContainer);
+        content.appendChild(modelContainer);
+        content.appendChild(deepseekModelContainer);
+        content.appendChild(openrouterModelContainer);
+        content.appendChild(geminiContainer);
+        content.appendChild(deepseekContainer);
+        content.appendChild(openrouterContainer);
+        content.appendChild(infoText);
+        content.appendChild(pricingInfo);
+        popup.appendChild(content);
+
+        // Function to update provider-specific settings visibility
+        function updateProviderVisibility() {
+            const provider = autoscribeSettings.formattingProvider;
+
+            modelContainer.style.display = (provider === 'gemini') ? 'block' : 'none';
+            deepseekModelContainer.style.display = (provider === 'deepseek') ? 'block' : 'none';
+            openrouterModelContainer.style.display = (provider === 'openrouter') ? 'block' : 'none';
+            geminiContainer.style.display = (provider === 'gemini') ? 'block' : 'none';
+            deepseekContainer.style.display = (provider === 'deepseek') ? 'block' : 'none';
+            openrouterContainer.style.display = (provider === 'openrouter') ? 'block' : 'none';
+        }
+
+        // Set initial visibility
+        updateProviderVisibility();
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(popup);
+
+        return { backdrop, popup };
+    }
+
+    // Helper function to build Autoscribe prompt
+    function buildAutoscribePrompt(styleGuide, headerInstructions, lyricsText) {
+        return `You are a lyrics formatter for Genius. Format the following lyrics according to the style guide provided. Output ONLY the formatted lyrics with no preamble, explanation, or commentary. Place the formatted lyrics inside triple backticks (\`\`\`) so they can be easily extracted.
+
+STYLE GUIDE:
+${styleGuide}${headerInstructions}
+
+LYRICS TO FORMAT:
+${lyricsText}
+
+Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
+    }
+
+    // Helper function to build AI Fix prompt
+    function buildAIFixPrompt(styleGuide, headerInstructions, lyricsText) {
+        return `You are a lyrics formatter for Genius. Review and fix the following lyrics according to the style guide provided. Fix any errors, incorrect formatting, or style violations. Output ONLY the corrected and formatted lyrics with no preamble, explanation, or commentary. Place the formatted lyrics inside triple backticks (\`\`\`) so they can be easily extracted.
+
+STYLE GUIDE:
+${styleGuide}${headerInstructions}
+
+LYRICS TO REVIEW AND FIX:
+${lyricsText}
+
+Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
+    }
+
+    // Shared function to create result modal buttons (Apply, Copy, Close)
+    function createResultModalButtons(options) {
+        const {
+            textEditor,
+            textarea,
+            backdrop,
+            modal,
+            updateButtonState,
+            resetButtonAfterDelay,
+            setOperationInProgress,
+            featureName,
+            initialText
+        } = options;
+
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
+
+        // Apply to Editor button
+        const applyButton = document.createElement('button');
+        applyButton.textContent = 'Apply to Editor';
+        applyButton.style.cssText = `
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        `;
+
+        // Copy to Clipboard button
+        const copyButton = document.createElement('button');
+        copyButton.textContent = 'Copy to Clipboard';
+        copyButton.style.cssText = `
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        `;
+
+        // Close button
+        const closeButton = document.createElement('button');
+        closeButton.textContent = 'Cancel';
+        closeButton.style.cssText = `
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        `;
+
+        // Apply button handler
+        applyButton.addEventListener('click', () => {
+            const finalText = textarea.value;
+            if (textEditor) {
+                if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+                    textEditor.value = finalText;
+                    textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+                    textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+                } else if (textEditor.isContentEditable) {
+                    textEditor.textContent = finalText;
+                    textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+                    textEditor.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                console.log(`[${featureName}] ✓ Applied to editor`);
+            }
+            backdrop.remove();
+            modal.remove();
+            updateButtonState('success', 'Applied');
+            if (resetButtonAfterDelay) {
+                resetButtonAfterDelay(2000);
+            }
+            if (setOperationInProgress) {
+                setOperationInProgress(false);
+            }
+        });
+
+        // Copy button handler
+        copyButton.addEventListener('click', async () => {
+            try {
+                const finalText = textarea.value;
+                await navigator.clipboard.writeText(finalText);
+                console.log(`[${featureName}] ✓ Copied to clipboard`);
+                copyButton.textContent = 'Copied! ✓';
+                copyButton.style.background = '#059669';
+                setTimeout(() => {
+                    backdrop.remove();
+                    modal.remove();
+                    updateButtonState('copied', 'Copied');
+                    if (resetButtonAfterDelay) {
+                        resetButtonAfterDelay(2000);
+                    }
+                    if (setOperationInProgress) {
+                        setOperationInProgress(false);
+                    }
+                }, 500);
+            } catch (err) {
+                console.warn(`[${featureName}] Clipboard API failed, trying execCommand:`, err.message);
+                textarea.select();
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    console.log(`[${featureName}] ✓ Copied to clipboard via execCommand`);
+                    copyButton.textContent = 'Copied! ✓';
+                    copyButton.style.background = '#059669';
+                    setTimeout(() => {
+                        backdrop.remove();
+                        modal.remove();
+                        updateButtonState('copied', 'Copied');
+                        if (resetButtonAfterDelay) {
+                            resetButtonAfterDelay(2000);
+                        }
+                        if (setOperationInProgress) {
+                            setOperationInProgress(false);
+                        }
+                    }, 500);
+                } else {
+                    console.error(`[${featureName}] Both copy methods failed`);
+                    alert('Copy failed! Please manually select and copy the text above.');
+                }
+            }
+        });
+
+        // Close button handler
+        closeButton.addEventListener('click', () => {
+            backdrop.remove();
+            modal.remove();
+            updateButtonState(null, featureName);
+            if (setOperationInProgress) {
+                setOperationInProgress(false);
+            }
+        });
+
+        // Assemble buttons
+        buttonContainer.appendChild(applyButton);
+        buttonContainer.appendChild(copyButton);
+        buttonContainer.appendChild(closeButton);
+
+        return buttonContainer;
+    }
+
     // Function to create the Autoscribe button
     function createAutoscribeButton() {
         console.log('[Autoscribe] Creating Autoscribe button...');
 
         const button = document.createElement('button');
         button.innerHTML = `
-            <span class="autoscribe-text" style="margin-right: 0.5rem;">Autoscribe</span>
-            <span class="settings-icon" style="opacity: 0.7; transition: opacity 0.2s; position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); padding: 0.25rem; cursor: pointer;">
+            <div class="autoscribe-progress-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 1.25rem; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.3s;">
+                <div class="autoscribe-progress-bar" style="height: 100%; width: 0%; background: #f59e0b; transition: width 0.3s ease-out;"></div>
+            </div>
+            <span class="autoscribe-text" style="position: relative; z-index: 1; margin-right: 0.5rem;">Autoscribe</span>
+            <span class="settings-icon" style="opacity: 0.7; transition: opacity 0.2s; position: relative; z-index: 1;">
                 <svg class="svg-icon" style="width: 1em; height: 1em; vertical-align: middle; fill: currentColor; overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
                     <path d="M512 661.994667q61.994667 0 106.005333-44.010667t44.010667-106.005333-44.010667-106.005333-106.005333-44.010667-106.005333 44.010667-44.010667 106.005333 44.010667 106.005333 106.005333 44.010667zM829.994667 554.005333l90.005333 69.994667q13.994667 10.005333 4.010667 28.010667l-85.994667 148.010667q-8 13.994667-26.005333 8l-106.005333-42.005333q-42.005333 29.994667-72 42.005333l-16 112q-4.010667 18.005333-20.010667 18.005333l-172.010667 0q-16 0-20.010667-18.005333l-16-112q-37.994667-16-72-42.005333l-106.005333 42.005333q-18.005333 5.994667-26.005333-8l-85.994667-148.010667q-10.005333-18.005333 4.010667-28.010667l90.005333-69.994667q-2.005333-13.994667-2.005333-42.005333t2.005333-42.005333l-90.005333-69.994667q-13.994667-10.005333-4.010667-28.010667l85.994667-148.010667q8-13.994667 26.005333-8l106.005333 42.005333q42.005333-29.994667 72-42.005333l16-112q4.010667-18.005333 20.010667-18.005333l172.010667 0q16 0 20.010667 18.005333l16 112q37.994667 16 72 42.005333l106.005333-42.005333q18.005333-5.994667 26.005333 8l85.994667 148.010667q10.005333 18.005333-4.010667 28.010667l-90.005333 69.994667q2.005333 13.994667 2.005333 42.005333t-2.005333 42.005333z" />
                 </svg>
@@ -5379,7 +6508,6 @@
         // Additional custom styling to match the other main buttons
         button.style.cssText = `
             margin-bottom: 0.5rem;
-            margin-left: 0.5rem;
             background-color: transparent;
             border: 1px solid #000;
             color: #000;
@@ -5402,7 +6530,7 @@
         let feedbackTimeout = null;
 
         // Add hover effects like other main buttons
-        button.addEventListener('mouseenter', function() {
+        button.addEventListener('mouseenter', function () {
             if (!operationInProgress) {
                 button.style.backgroundColor = '#000';
                 button.style.color = '#fff';
@@ -5411,7 +6539,7 @@
             }
         });
 
-        button.addEventListener('mouseleave', function() {
+        button.addEventListener('mouseleave', function () {
             if (!operationInProgress) {
                 button.style.backgroundColor = 'transparent';
                 button.style.color = '#000';
@@ -5427,9 +6555,12 @@
         fileInput.accept = 'audio/*,video/*'; // Accept audio and video files
         document.body.appendChild(fileInput);
 
-        // Function to update button state
-        function updateButtonState(state, text) {
+        // Function to update button state with progress
+        function updateButtonState(state, text, progress = null) {
             const textSpan = button.querySelector('.autoscribe-text');
+            const progressContainer = button.querySelector('.autoscribe-progress-container');
+            const progressBar = button.querySelector('.autoscribe-progress-bar');
+            
             if (text && textSpan) {
                 textSpan.textContent = text;
             }
@@ -5438,18 +6569,51 @@
                 button.style.backgroundColor = '#fbbf24';
                 button.style.borderColor = '#fbbf24';
                 button.style.color = '#000';
+                
+                // Show progress bar
+                if (progressContainer && progressBar) {
+                    progressContainer.style.opacity = '1';
+                    if (progress !== null) {
+                        progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+                    } else {
+                        progressBar.style.width = '0%';
+                    }
+                }
             } else if (state === 'copied' || state === 'success') {
                 button.style.backgroundColor = '#10b981';
                 button.style.borderColor = '#10b981';
                 button.style.color = '#fff';
+                
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
+                if (progressBar) {
+                    progressBar.style.width = '100%';
+                    progressBar.style.background = '#10b981';
+                }
             } else if (state === 'error') {
                 button.style.backgroundColor = '#ef4444';
                 button.style.borderColor = '#ef4444';
                 button.style.color = '#fff';
+                
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
             } else {
                 button.style.backgroundColor = 'transparent';
                 button.style.borderColor = '#000';
                 button.style.color = '#000';
+                
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                    progressBar.style.background = '#f59e0b';
+                }
             }
         }
 
@@ -5464,7 +6628,7 @@
         }
 
         // Handle file selection
-        fileInput.addEventListener('change', async function() {
+        fileInput.addEventListener('change', async function () {
             if (operationInProgress) {
                 console.log('[Autoscribe] Operation already in progress, ignoring...');
                 return;
@@ -5507,10 +6671,12 @@
 
             try {
                 // Update button to show processing
-                updateButtonState('processing', 'Uploading...');
+                updateButtonState('processing', 'Uploading...', 0);
 
-                // Step 1: Upload file
-                const downloadUrl = await uploadFileToMusicAI(file, musicAiApiKey);
+                // Step 1: Upload file with progress tracking
+                const downloadUrl = await uploadFileToMusicAI(file, musicAiApiKey, (progressPercent) => {
+                    updateButtonState('processing', 'Uploading...', progressPercent);
+                });
                 console.log('[Autoscribe] ✓ File upload complete');
 
                 // Step 2: Create transcription job
@@ -5518,21 +6684,23 @@
                 const jobId = await createTranscriptionJob(downloadUrl, musicAiApiKey);
                 console.log('[Autoscribe] ✓ Job created');
 
-                // Step 3: Poll for result
-                updateButtonState('processing', 'Transcribing...');
-                const result = await pollJobStatus(jobId, musicAiApiKey);
+                // Step 3: Poll for result with progress updates
+                updateButtonState('processing', 'Transcribing...', 5);
+                const result = await pollJobStatus(jobId, musicAiApiKey, (attempt, maxAttempts, progressPercent) => {
+                    updateButtonState('processing', 'Transcribing...', progressPercent);
+                });
                 console.log('[Autoscribe] ✓ Transcription complete');
                 console.log('[Autoscribe] Result object:', result);
 
                 // Step 4: Download the actual transcription JSON
                 updateButtonState('processing', 'Downloading...');
 
-                if (!result.Output1) {
-                    throw new Error('No Output1 URL in result');
+                if (!result.lyrics) {
+                    throw new Error('No lyrics URL in result');
                 }
 
-                console.log('[Autoscribe] Downloading transcription from:', result.Output1);
-                const transcriptionResponse = await fetch(result.Output1);
+                console.log('[Autoscribe] Downloading transcription from:', result.lyrics);
+                const transcriptionResponse = await fetch(result.lyrics);
 
                 if (!transcriptionResponse.ok) {
                     throw new Error(`Failed to download transcription: ${transcriptionResponse.status}`);
@@ -5570,13 +6738,49 @@
 
                 // Step 6: Format with AI (if enabled)
                 let formattedText = resultText; // Default to unformatted
-                
+
                 if (autoscribeSettings.useFormatting && autoscribeSettings.formattingProvider !== 'none') {
                     updateButtonState('processing', 'Formatting...');
-                    
+
                     const provider = autoscribeSettings.formattingProvider;
                     console.log('[Autoscribe] Using formatting provider:', provider);
-                    
+
+                    // Shared style guide for autoscribe (used by both DeepSeek and Gemini)
+                    const styleGuide = `Format lyrics to Genius style. Follow official streaming version. Have correct and accurate, clean, and concise lyrics. Transcribe the entire song. All repeated sections must be written out in full. If a specific word or format is not covered in this guide, make an educated guess based on the existing rules and the context of the lyric. Type out all repeated lyrics in full each time they occur. Do not use notations like \(x2)\.
+
+**SPELLINGS:** \`I'ma\` (not "I'mma," "Ima,") \`'cause\` (not "cuz," unless about cousin) \`okay\` (not "ok") \`'til\` \`tryna\` \`ayy\` (not aye, ay) \`ho\`/\`hoes\` (not hoe, unless referring to the garden tool)  \`though\` (not "tho") \`y'all\` \`skrrt\` (not "skrt")\`Perc'\` (not Perk, Perky, Percy, unless "perk" is used in another context) \`bougie\` \`shawty\`/\`shorty\` \`lil'\` \`woah\` (not "whoa") \`chopper\` \`oughta\` \`naive\` (not naïve) \`cliché\` \`alright\` \`a.k.a.\` \`GOAT\` \`VIP\` \`ASAP\` (use \`A$AP\` for A$AP Rocky/Mob) \`foenem\` \`bronem\` \`somethin'\` \`nothin'\` \`lo'\` \`switch\`/\`switchy\`/\`switchies\` \`blick\`/\`blicky\`/\`blickies\` \`cuz\` \`T'd\` \`dawgy\` \`slimy\` \`high-speed\` \`E-way\`
+
+**NUMBERS:** Spell out (e.g., "five", "fifty-six", "thirty-five hunnid"). Use digits for: proper nouns (\`Royce da 5'9"\` \`Nintendo 64\` \`Area 51\`), model numbers/calibers (\`G5\` \`.380\`), years (\`1993\`), \`24/7\`, police slang (\`5-0\` \`12\`), money (\`24K\` \`10K\`). Times: digits with colon (\`5:30\` \`6 o'clock\` \`a.m.\` \`p.m.\`)
+
+**PUNCTUATION:** Typewriter apostrophes (\`'\`) not curly (\`'\`). Typewriter quotes (\`"\`) not curly (\`"\`\`"\`). Single \`?\` for questions, do not use \`!\` unless in "Ah!" or metal-type screams. Never use \`.\` Hyphens for stutters (\`D-d-d-d-don't\`). Em dash (\`—\`) for dropped words or multi-word stutters. Spell out \`&\` and \`°\` unless brand name. No ™ or ®. Always add a comma before the word but, unless it's staring a line - same with yeah, unless "Oh yeah"
+
+**CAPITALIZATION:** First word of each line, proper nouns, \`God\`, acronyms. Brands: conventional (\`Chanel\` \`Adidas\` \`iPhone\` \`GEICO\`). \`Earth\` (planet), cardinal directions only for regions.
+
+**NON-LYRICAL:** Ad-libs in parentheses, capitalize first letter (\`(Yeah)\` \`(Ooh)\`). Transcribe as pronounced with apostrophes (\`ballin'\` \`'em\`).
+
+**CATEGORIES:** Firearms: \`Draco\` \`TEC-9\` \`MAC-10\` \`Glock\` \`FN\`/\`F&N\`/\`Five-seveN\` \`Kel-Tec\` \`SIG\` \`Ruger\` \`Smith & Wesson\` (calibers digits: \`.45\` \`5.56\`, rounds spelled: \`thirty-round mag\`). Jewelry: \`plain jane\` \`presidential\`/\`presi\` \`bust down\` \`Richard Mille\` \`Cartier\`/\`Carti'\` \`Rolex\`/\`Rollie\` \`Audemars Piguet\` \`Cuban\`. Drugs: \`Xanax\`/\`Xan'\` \`Percocet\`/\`Perc'\` \`Roxy\` \`Addy\` \`Wockhardt\` \`Hi-Tech\` \`Tussionex\` \`Actavis\` \`zaza\`/\`za\` \`Backwood\`/\`'Wood\` \`molly\` \`fetty\`. Vehicles: \`straight-eight\` \`Redeye\` \`392\` \`Bimmer\` \`Lamborghini\`/\`Lambo'\` \`Durango\`/\`'Rango\` \`Corvette\`/\`'Vette\` \`Maybach\`/\`'Bach\` \`Hemi\` \`Scat Pack\` \`Trackhawk\` \`stolo\`
+
+**PARTIAL EXAMPLE TRANSCRIPTION:**
+I got two new straps in it (Yeah)
+Bitch, I'm like Lil Tay-Tay, flexin', I'm the youngest in it
+5.56 gon' bleed it (Go)
+I'm prayin' to God, but I'm sinnin' (Woah)
+Dior pants hold up the .60
+I'm Hollywood? No, bitch, I'm hood famous (Yeah)
+WWE Smackdown, b-bitch, I bring the pain (Yeah, yeah, yeah)
+And my OG snappin', told 'em, "Clear the scene"
+I-I'm like Marilyn Manson (Yeah)
+I'm like— I'm like Marilyn Manson (Yeah)
+                    I got a lean bladder (Yeah, yeah)`;
+
+                    // Build header instructions once for all providers
+                    const headerInstructions = autoscribeSettings.useHeaders ? `
+**HEADERS:** Use \`[Intro]\` \`[Verse]\` \`[Refrain]\` \`[Pre-Chorus]\` \`[Chorus]\` \`[Bridge]\` \`[Outro]\` to mark song parts. Find chorus first (repeated sections). Add verses between. Number verses like [Verse 1], unless there is only a single verse header in the transcription. Short sections (3 lines max, unless mainly consisting of adlib-type words (like ayy, what, yeah, etc)) starting or ending song before/after chorus = intro/outro. Repeat lyrics under same header if section repeats immediately (no extra space).
+Example:
+[Chorus]
+Line one
+Line two` : '';
+
                     if (provider === 'deepseek') {
                         // DeepSeek formatting
                         let deepseekApiKey = autoscribeSettings.deepseekApiKey;
@@ -5589,59 +6793,21 @@
                                 console.log('[Autoscribe] DeepSeek API key saved to settings');
                             }
                         }
-                        
+
                         if (deepseekApiKey && deepseekApiKey.trim() !== '') {
                             console.log('[Autoscribe] DeepSeek API key loaded, formatting lyrics...');
-                            
+
                             try {
-                                const styleGuide = `Format lyrics to Genius style. Follow official streaming version. Write out all repeated sections in full.
+                                const prompt = buildAutoscribePrompt(styleGuide, headerInstructions, resultText);
 
-**SPELLINGS:** \`I'ma\` \`'cause\` \`okay\` \`'til\`/\`till\` \`tryna\` \`ayy\` \`ho\`/\`hoes\` \`though\` \`y'all\` \`skrrt\` \`Perc'\` \`bougie\` \`shawty\`/\`shorty\` \`lil'\` \`woah\` \`dog\` \`chopper\` \`oughta\` \`naive\` \`cliché\` \`alright\` \`a.k.a.\` \`GOAT\` \`VIP\` \`ASAP\` (use \`A$AP\` for A$AP Rocky/Mob) \`foenem\` \`bronem\` \`somethin'\` \`nothin'\` \`lo'\` \`switch\`/\`switchy\`/\`switchies\` \`blick\`/\`blicky\`/\`blickies\` \`cuz\` \`T'd\` \`doggy\` \`slimy\` \`high-speed\` \`E-way\` \`monyun\`
-
-**NUMBERS:** Spell out (e.g., "five", "fifty-six", "thirty-five hunnid"). Use digits for: proper nouns (\`Royce da 5'9"\` \`Nintendo 64\` \`Area 51\`), model numbers/calibers (\`G5\` \`.380\`), years (\`1993\`), \`24/7\`, police slang (\`5-0\` \`12\`), money (\`24K\` \`10K\`). Times: digits with colon (\`5:30\` \`6 o'clock\` \`a.m.\` \`p.m.\`)
-
-**PUNCTUATION:** Typewriter apostrophes (\`'\`) not curly (\`'\`). Typewriter quotes (\`"\`) not curly (\`"\`\`"\`). Single \`?\` for questions, single \`!\` for screams. Hyphens for scatting/stutters (\`Ski-bi-dibby-dib\` \`D-d-d-d-don't\`). Em dash (\`—\`) for dropped words. Spell out \`&\` and \`°\` unless brand name. No ™ or ®. Censored words: \`****\`
-
-**CAPITALIZATION:** First word of each line, proper nouns, \`God\`, acronyms. Brands: conventional (\`Chanel\` \`Adidas\` \`iPhone\` \`GEICO\`). \`Earth\` (planet), cardinal directions only for regions.
-
-**NON-LYRICAL:** Ad-libs in parentheses, capitalize first letter (\`(Yeah)\` \`(Ooh)\`). Missing lyrics: \`[?]\`. Transcribe as pronounced with apostrophes (\`ballin'\` \`'em\`).
-
-**CATEGORIES:** Firearms: \`Draco\` \`TEC-9\` \`MAC-10\` \`Glock\` \`FN\`/\`F&N\`/\`Five-seveN\` \`Kel-Tec\` \`SIG\` \`Ruger\` \`Smith & Wesson\` (calibers digits: \`.45\` \`5.56\`, rounds spelled: \`thirty-round mag\`). Jewelry: \`plain jane\` \`presidential\`/\`presi\` \`bust down\` \`Richard Mille\` \`Cartier\`/\`Carti'\` \`Rolex\`/\`Rollie\` \`Audemars Piguet\` \`Cuban\`. Drugs: \`Xanax\`/\`Xan'\` \`Percocet\`/\`Perc'\` \`Roxy\` \`Addy\` \`Wockhardt\` \`Hi-Tech\` \`Tussionex\` \`Actavis\` \`zaza\`/\`za\` \`Backwood\`/\`'Wood\` \`molly\` \`fetty\`. Vehicles: \`straight-eight\` \`Redeye\` \`392\` \`Bimmer\` \`Lamborghini\`/\`Lambo'\` \`Durango\`/\`'Rango\` \`Corvette\`/\`'Vette\` \`Maybach\`/\`'Bach\` \`Hemi\` \`Scat Pack\` \`Trackhawk\` \`stolo\`
-
-**EXAMPLE:**
-I got two new straps in it (Yeah)
-5.56 gon' bleed it, so (Go)
-I'm prayin' to God, but I'm sinnin' (Woah)
-Dior pants hold up the .60
-I-I'm like Marilyn Manson (Yeah)
-I got a lean bladder (Yeah, yeah)`;
-
-
-                                const headerInstructions = autoscribeSettings.useHeaders ? `
-**HEADERS:** Use \`[Intro]\` \`[Verse]\` \`[Refrain]\` \`[Pre-Chorus]\` \`[Chorus]\` \`[Bridge]\` \`[Outro]\` to mark song parts. Find chorus first (repeated sections). Add verses between. Number verses like [Verse 1], unless there is only a single verse header in the transcription. Short sections (3 lines max, unless mainly consisting of adlib-type words (like ayy, what, yeah, etc)) starting or ending song before/after chorus = intro/outro. Repeat lyrics under same header if section repeats immediately (no extra space).
-Example:
-[Chorus]
-Line one
-Line two` : '';
-
-                        const prompt = `You are a lyrics formatter for Genius. Format the following lyrics according to the style guide provided. Output ONLY the formatted lyrics with no preamble, explanation, or commentary. Place the formatted lyrics inside triple backticks (\`\`\`) so they can be easily extracted.
-
-STYLE GUIDE:
-${styleGuide}${headerInstructions}
-
-LYRICS TO FORMAT:
-${resultText}
-
-Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
-                                
                                 console.log('[Autoscribe] Sending request to DeepSeek API...');
                                 console.log('[Autoscribe] Using model:', autoscribeSettings.deepseekModel);
                                 console.log('[Autoscribe] Prompt length:', prompt.length, 'characters');
-                                
+
                                 // Create AbortController for timeout
                                 const controller = new AbortController();
                                 const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
-                                
+
                                 try {
                                     // Try with /v1/ prefix (standard OpenAI-compatible endpoint)
                                     const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
@@ -5664,27 +6830,27 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                         }),
                                         signal: controller.signal
                                     });
-                                    
+
                                     clearTimeout(timeoutId); // Clear timeout on successful response
-                                    
+
                                     console.log('[Autoscribe] DeepSeek response status:', deepseekResponse.status);
                                     console.log('[Autoscribe] DeepSeek response headers:', Object.fromEntries(deepseekResponse.headers.entries()));
-                                    
+
                                     if (!deepseekResponse.ok) {
                                         const errorText = await deepseekResponse.text();
                                         console.error('[Autoscribe] DeepSeek API error:', errorText);
                                         throw new Error(`DeepSeek API error (${deepseekResponse.status}): ${errorText.substring(0, 200)}`);
                                     }
-                                    
+
                                     // Get response text first to check if it's empty
                                     const responseText = await deepseekResponse.text();
                                     console.log('[Autoscribe] DeepSeek raw response length:', responseText.length);
                                     console.log('[Autoscribe] DeepSeek raw response preview:', responseText.substring(0, 200));
-                                    
+
                                     if (!responseText || responseText.trim() === '') {
                                         throw new Error('DeepSeek returned empty response (server may be overloaded, try again later)');
                                     }
-                                    
+
                                     // Try to parse JSON
                                     let deepseekData;
                                     try {
@@ -5693,18 +6859,18 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                         console.error('[Autoscribe] Failed to parse DeepSeek response:', parseError);
                                         throw new Error('DeepSeek returned invalid JSON response (server may be overloaded)');
                                     }
-                                    
+
                                     console.log('[Autoscribe] DeepSeek response data:', deepseekData);
-                                    
+
                                     // Extract text from DeepSeek response (OpenAI-compatible format)
                                     if (deepseekData.choices && deepseekData.choices[0] && deepseekData.choices[0].message && deepseekData.choices[0].message.content) {
                                         let deepseekText = deepseekData.choices[0].message.content;
                                         console.log('[Autoscribe] Raw DeepSeek output:', deepseekText);
-                                        
+
                                         if (!deepseekText || deepseekText.trim() === '') {
                                             throw new Error('DeepSeek returned empty content (server may be overloaded, try again later)');
                                         }
-                                        
+
                                         // Extract text between triple backticks
                                         const codeBlockMatch = deepseekText.match(/```[\s\S]*?\n([\s\S]*?)```/);
                                         if (codeBlockMatch && codeBlockMatch[1]) {
@@ -5715,7 +6881,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                             console.warn('[Autoscribe] No code block found, using raw response');
                                             formattedText = deepseekText.trim();
                                         }
-                                        
+
                                         console.log('[Autoscribe] ✓ Lyrics formatted by DeepSeek');
                                         console.log('[Autoscribe] Formatted text length:', formattedText.length, 'characters');
                                     } else {
@@ -5729,7 +6895,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                     }
                                     throw fetchError;
                                 }
-                                
+
                             } catch (deepseekError) {
                                 console.error('[Autoscribe] DeepSeek formatting error:', deepseekError);
                                 console.error('[Autoscribe] Stack:', deepseekError.stack);
@@ -5739,7 +6905,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                         } else {
                             console.log('[Autoscribe] No DeepSeek API key available, skipping formatting');
                         }
-                        
+
                     } else if (provider === 'gemini') {
                         // Gemini formatting
                         let geminiApiKey = autoscribeSettings.geminiApiKey;
@@ -5752,12 +6918,587 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                 console.log('[Autoscribe] Gemini API key saved to settings');
                             }
                         }
-                        
+
                         if (geminiApiKey && geminiApiKey.trim() !== '') {
                             console.log('[Autoscribe] Gemini API key loaded, formatting lyrics...');
-                            
+
                             try {
-                                const styleGuide = `Format lyrics to Genius style. Follow official streaming version. Have correct and accurate, clean, and concise lyrics. Transcribe the entire song. All repeated sections must be written out in full. If a specific word or format is not covered in this guide, make an educated guess based on the existing rules and the context of the lyric. Type out all repeated lyrics in full each time they occur. Do not use notations like \(x2)\.
+                                const prompt = buildAutoscribePrompt(styleGuide, headerInstructions, resultText);
+
+                                console.log('[Autoscribe] Sending request to Gemini API...');
+                                console.log('[Autoscribe] Using model:', autoscribeSettings.geminiModel);
+                                console.log('[Autoscribe] Prompt length:', prompt.length, 'characters');
+
+                                const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${autoscribeSettings.geminiModel}:generateContent?key=${geminiApiKey}`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        contents: [{
+                                            parts: [{
+                                                text: prompt
+                                            }]
+                                        }]
+                                    })
+                                });
+
+                                console.log('[Autoscribe] Gemini response status:', geminiResponse.status);
+
+                                if (!geminiResponse.ok) {
+                                    const errorText = await geminiResponse.text();
+                                    console.error('[Autoscribe] Gemini API error:', errorText);
+                                    throw new Error(`Gemini API error: ${geminiResponse.status}`);
+                                }
+
+                                const geminiData = await geminiResponse.json();
+                                console.log('[Autoscribe] Gemini response data:', geminiData);
+
+                                // Extract text from Gemini response
+                                if (geminiData.candidates && geminiData.candidates[0] && geminiData.candidates[0].content && geminiData.candidates[0].content.parts && geminiData.candidates[0].content.parts[0]) {
+                                    let geminiText = geminiData.candidates[0].content.parts[0].text;
+                                    console.log('[Autoscribe] Raw Gemini output:', geminiText);
+
+                                    // Extract text between triple backticks
+                                    const codeBlockMatch = geminiText.match(/```[\s\S]*?\n([\s\S]*?)```/);
+                                    if (codeBlockMatch && codeBlockMatch[1]) {
+                                        formattedText = codeBlockMatch[1].trim();
+                                        console.log('[Autoscribe] ✓ Extracted formatted text from code block');
+                                    } else {
+                                        // Fallback: use the whole response if no code block found
+                                        console.warn('[Autoscribe] No code block found, using raw response');
+                                        formattedText = geminiText.trim();
+                                    }
+
+                                    console.log('[Autoscribe] ✓ Lyrics formatted by Gemini');
+                                    console.log('[Autoscribe] Formatted text length:', formattedText.length, 'characters');
+                                    updateButtonState('processing', 'Done', 98);
+                                } else {
+                                    throw new Error('Unexpected Gemini response structure');
+                                }
+
+                            } catch (geminiError) {
+                                console.error('[Autoscribe] Gemini formatting error:', geminiError);
+                                console.error('[Autoscribe] Stack:', geminiError.stack);
+                                alert(`Gemini formatting failed: ${geminiError.message}\n\nShowing unformatted lyrics instead.`);
+                                // Continue with unformatted text
+                            }
+                        } else {
+                            console.log('[Autoscribe] No Gemini API key available, skipping formatting');
+                        }
+
+                    } else if (provider === 'openrouter') {
+                        // OpenRouter formatting (OpenAI-compatible API)
+                        let openrouterApiKey = autoscribeSettings.openrouterApiKey;
+                        if (!openrouterApiKey || openrouterApiKey.trim() === '') {
+                            const promptedKey = prompt('Enter your OpenRouter API key (or press Cancel to skip formatting):');
+                            if (promptedKey && promptedKey.trim() !== '') {
+                                openrouterApiKey = promptedKey.trim();
+                                autoscribeSettings.openrouterApiKey = openrouterApiKey;
+                                saveAutoscribeSettings();
+                                console.log('[Autoscribe] OpenRouter API key saved to settings');
+                            }
+                        }
+
+                        if (openrouterApiKey && openrouterApiKey.trim() !== '') {
+                            console.log('[Autoscribe] OpenRouter API key loaded, formatting lyrics...');
+                            updateButtonState('processing', 'Sending...', 90);
+
+                            try {
+                                const prompt = buildAutoscribePrompt(styleGuide, headerInstructions, resultText);
+
+                                console.log('[Autoscribe] Sending request to OpenRouter API...');
+                                console.log('[Autoscribe] Using model:', autoscribeSettings.openrouterModel || 'google/gemini-2.0-flash-exp');
+                                console.log('[Autoscribe] Prompt length:', prompt.length, 'characters');
+
+                                // Create AbortController for timeout
+                                const controller = new AbortController();
+                                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
+                                // Start animated progress for ~12 seconds
+                                let waitProgress = 90;
+                                updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                                const waitInterval = setInterval(() => {
+                                    waitProgress = Math.min(98, waitProgress + 1);
+                                    updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                                }, 400);
+
+                                try {
+                                    const openrouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Authorization': `Bearer ${openrouterApiKey}`,
+                                            'Content-Type': 'application/json',
+                                            'HTTP-Referer': window.location.origin,
+                                            'X-Title': 'ScribeTools'
+                                        },
+                                        body: JSON.stringify({
+                                            model: autoscribeSettings.openrouterModel || 'google/gemini-2.0-flash-exp',
+                                            messages: [
+                                                {
+                                                    role: 'user',
+                                                    content: prompt
+                                                }
+                                            ],
+                                            stream: false,
+                                            temperature: 0.7,
+                                            max_tokens: 4096
+                                        }),
+                                        signal: controller.signal
+                                    });
+
+                                    clearInterval(waitInterval);
+                                    clearTimeout(timeoutId);
+
+                                    console.log('[Autoscribe] OpenRouter response status:', openrouterResponse.status);
+
+                                    if (!openrouterResponse.ok) {
+                                        const errorText = await openrouterResponse.text();
+                                        console.error('[Autoscribe] OpenRouter API error:', errorText);
+                                        throw new Error(`OpenRouter API error (${openrouterResponse.status}): ${errorText.substring(0, 200)}`);
+                                    }
+
+                                    const openrouterData = await openrouterResponse.json();
+                                    console.log('[Autoscribe] OpenRouter response data:', openrouterData);
+
+                                    // Extract text from OpenRouter response (OpenAI-compatible format)
+                                    if (openrouterData.choices && openrouterData.choices[0] && openrouterData.choices[0].message && openrouterData.choices[0].message.content) {
+                                        let openrouterText = openrouterData.choices[0].message.content;
+                                        console.log('[Autoscribe] Raw OpenRouter output:', openrouterText);
+
+                                        if (!openrouterText || openrouterText.trim() === '') {
+                                            throw new Error('OpenRouter returned empty content');
+                                        }
+
+                                        // Extract text between triple backticks
+                                        const codeBlockMatch = openrouterText.match(/```[\s\S]*?\n([\s\S]*?)```/);
+                                        if (codeBlockMatch && codeBlockMatch[1]) {
+                                            formattedText = codeBlockMatch[1].trim();
+                                            console.log('[Autoscribe] ✓ Extracted formatted text from code block');
+                                        } else {
+                                            // Fallback: use the whole response if no code block found
+                                            console.warn('[Autoscribe] No code block found, using raw response');
+                                            formattedText = openrouterText.trim();
+                                        }
+
+                                        console.log('[Autoscribe] ✓ Lyrics formatted by OpenRouter');
+                                        console.log('[Autoscribe] Formatted text length:', formattedText.length, 'characters');
+                                        updateButtonState('processing', 'Done', 98);
+                                    } else {
+                                        console.error('[Autoscribe] Unexpected response structure:', openrouterData);
+                                        throw new Error('Unexpected OpenRouter response structure (missing choices/message/content)');
+                                    }
+                                } catch (fetchError) {
+                                    clearInterval(waitInterval);
+                                    clearTimeout(timeoutId);
+                                    if (fetchError.name === 'AbortError') {
+                                        throw new Error('OpenRouter request timed out after 2 minutes');
+                                    }
+                                    throw fetchError;
+                                }
+
+                            } catch (openrouterError) {
+                                console.error('[Autoscribe] OpenRouter formatting error:', openrouterError);
+                                console.error('[Autoscribe] Stack:', openrouterError.stack);
+                                alert(`OpenRouter formatting failed: ${openrouterError.message}\n\nShowing unformatted lyrics instead.`);
+                                // Continue with unformatted text
+                            }
+                        } else {
+                            console.log('[Autoscribe] No OpenRouter API key available, skipping formatting');
+                        }
+                    }
+                } else {
+                    console.log('[Autoscribe] AI formatting disabled in settings');
+                }
+
+                // Update resultText to use formatted version
+                resultText = formattedText;
+                updateButtonState('processing', 'Done', 100);
+
+                // Get text editor for applying results
+                const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
+                    document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+                    document.querySelector('textarea') ||
+                    document.querySelector('[contenteditable="true"]');
+
+                // Create modal to display result with apply/copy buttons
+                const modal = document.createElement('div');
+                modal.style.cssText = `
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: white;
+                    padding: 25px;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+                    z-index: 10002;
+                    max-width: 600px;
+                    max-height: 80vh;
+                    overflow-y: auto;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                `;
+
+                const backdrop = document.createElement('div');
+                backdrop.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0,0,0,0.5);
+                    z-index: 10001;
+                `;
+
+                const title = document.createElement('h2');
+                title.textContent = 'Transcription Complete! ✓';
+                title.style.cssText = 'margin: 0 0 15px 0; font-size: 20px; color: #10b981;';
+
+                const resultLineCount = resultText.split('\n').length;
+                const info = document.createElement('p');
+                info.innerHTML = `${resultLineCount} line${resultLineCount !== 1 ? 's' : ''} • ${resultText.length.toLocaleString()} characters<br><em style="color: #999; font-size: 12px;">Review the transcription before applying</em>`;
+                info.style.cssText = 'margin: 0 0 15px 0; color: #666;';
+
+                const textarea = document.createElement('textarea');
+                textarea.value = resultText;
+                textarea.readOnly = false;
+                textarea.style.cssText = `
+                    width: 100%;
+                    height: 300px;
+                    padding: 10px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    font-size: 14px;
+                    line-height: 1.5;
+                    margin-bottom: 15px;
+                    resize: vertical;
+                    white-space: pre-wrap;
+                `;
+
+                // Create buttons using shared function
+                const buttonContainer = createResultModalButtons({
+                    textEditor: textEditor,
+                    textarea: textarea,
+                    backdrop: backdrop,
+                    modal: modal,
+                    updateButtonState: updateButtonState,
+                    resetButtonAfterDelay: resetButtonAfterDelay,
+                    setOperationInProgress: (value) => { operationInProgress = value; },
+                    featureName: 'Autoscribe',
+                    initialText: resultText
+                });
+
+                // Backdrop click to close
+                backdrop.addEventListener('click', () => {
+                    backdrop.remove();
+                    modal.remove();
+                    updateButtonState(null, 'Autoscribe');
+                    operationInProgress = false;
+                });
+
+                // Assemble modal
+                modal.appendChild(title);
+                modal.appendChild(info);
+                modal.appendChild(textarea);
+                modal.appendChild(buttonContainer);
+
+                // Add to page
+                document.body.appendChild(backdrop);
+                document.body.appendChild(modal);
+
+                // Update button state
+                updateButtonState('copied', 'Ready');
+
+                console.log('[Autoscribe] ========================================');
+                console.log('[Autoscribe] Autoscribe process completed successfully!');
+                console.log('[Autoscribe] Modal displayed with apply/copy buttons');
+                console.log('[Autoscribe] ========================================');
+
+            } catch (error) {
+                console.error('[Autoscribe] ========================================');
+                console.error('[Autoscribe] ERROR in Autoscribe process:');
+                console.error('[Autoscribe]', error.message);
+                console.error('[Autoscribe] Stack trace:', error.stack);
+                console.error('[Autoscribe] ========================================');
+
+                updateButtonState('error', 'Error');
+                alert(`Autoscribe Error: ${error.message}\n\nCheck console for details.`);
+                resetButtonAfterDelay(5000);
+            }
+
+            // Reset file input
+            fileInput.value = '';
+        });
+
+        // Button click opens file dialog or settings
+        button.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Get button bounds and click position
+            const buttonRect = button.getBoundingClientRect();
+            const clickX = e.clientX;
+
+            // Create a generous buffer zone - if click is in the right 35% of button, treat as settings
+            const buttonWidth = buttonRect.width;
+            const settingsZoneStart = buttonRect.left + (buttonWidth * 0.65); // Right 35% of button
+
+            // If click is in the settings zone (right 35% with buffer), open settings
+            if (clickX >= settingsZoneStart) {
+                console.log('[Autoscribe] Settings zone clicked');
+                // Show settings popup
+                const autoscribeSettingsPopup = createAutoscribeSettingsPopup();
+                autoscribeSettingsPopup.backdrop.style.display = 'block';
+                autoscribeSettingsPopup.popup.style.display = 'block';
+                return;
+            }
+
+            if (operationInProgress) {
+                console.log('[Autoscribe] Operation in progress, ignoring click...');
+                return;
+            }
+
+            console.log('[Autoscribe] Button clicked, opening file dialog...');
+            fileInput.click();
+        });
+
+        console.log('[Autoscribe] Button created successfully');
+        return button;
+    }
+
+    // Function to create the AI Fix button
+    function createAIFixButton() {
+        console.log('[AI Fix] Creating AI Fix button...');
+
+        const button = document.createElement('button');
+        button.innerHTML = `
+            <div class="aifix-progress-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 1.25rem; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity 0.3s;">
+                <div class="aifix-progress-bar" style="height: 100%; width: 0%; background: #f59e0b; transition: width 0.3s ease-out;"></div>
+            </div>
+            <span class="aifix-text" style="position: relative; z-index: 1; margin-right: 0.5rem;">AI Fix</span>
+            <span class="settings-icon" style="opacity: 0.7; transition: opacity 0.2s; position: relative; z-index: 1;">
+                <svg class="svg-icon" style="width: 1em; height: 1em; vertical-align: middle; fill: currentColor; overflow: hidden;" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M512 661.994667q61.994667 0 106.005333-44.010667t44.010667-106.005333-44.010667-106.005333-106.005333-44.010667-106.005333 44.010667-44.010667 106.005333 44.010667 106.005333 106.005333 44.010667zM829.994667 554.005333l90.005333 69.994667q13.994667 10.005333 4.010667 28.010667l-85.994667 148.010667q-8 13.994667-26.005333 8l-106.005333-42.005333q-42.005333 29.994667-72 42.005333l-16 112q-4.010667 18.005333-20.010667 18.005333l-172.010667 0q-16 0-20.010667-18.005333l-16-112q-37.994667-16-72-42.005333l-106.005333 42.005333q-18.005333 5.994667-26.005333-8l-85.994667-148.010667q-10.005333-18.005333 4.010667-28.010667l90.005333-69.994667q-2.005333-13.994667-2.005333-42.005333t2.005333-42.005333l-90.005333-69.994667q-13.994667-10.005333-4.010667-28.010667l85.994667-148.010667q8-13.994667 26.005333-8l106.005333 42.005333q42.005333-29.994667 72-42.005333l16-112q4.010667-18.005333 20.010667-18.005333l172.010667 0q16 0 20.010667 18.005333l16 112q37.994667 16 72 42.005333l106.005333-42.005333q18.005333-5.994667 26.005333 8l85.994667 148.010667q10.005333 18.005333-4.010667 28.010667l-90.005333 69.994667q2.005333 13.994667 2.005333 42.005333t-2.005333 42.005333z" />
+                </svg>
+            </span>
+        `;
+        button.title = 'Send current lyrics to AI for review and fixes. Click gear icon for settings.';
+        button.id = 'genius-aifix-button';
+
+        // Style to match Genius buttons - get classes dynamically
+        const buttonClasses = getGeniusButtonClasses();
+        button.className = `${buttonClasses.container} ${buttonClasses.styles} ${buttonClasses.lyricsEdit}`;
+
+        // Additional custom styling to match the other main buttons
+        button.style.cssText = `
+            margin-bottom: 0.5rem;
+            margin-left: 0.5rem;
+            background-color: transparent;
+            border: 1px solid #000;
+            color: #000;
+            font-weight: 400;
+            font-family: 'HelveticaNeue', Arial, sans-serif;
+            font-size: 1rem;
+            line-height: 1.1;
+            padding: 0.5rem 1.313rem;
+            position: relative;
+            border-radius: 1.25rem;
+            cursor: pointer;
+            min-width: auto;
+            display: inline-flex;
+            align-items: center;
+            position: relative;
+        `;
+
+        // Track timeout to prevent multiple overlapping operations
+        let operationInProgress = false;
+        let feedbackTimeout = null;
+        let isHovering = false;
+        let currentState = null; // Track current button state
+
+        // Helper function to apply styles based on current state and hover
+        function applyCurrentStyles() {
+            const settingsIcon = button.querySelector('.settings-icon');
+            
+            if (currentState === 'processing') {
+                button.style.backgroundColor = '#fbbf24';
+                button.style.borderColor = '#fbbf24';
+                button.style.color = '#000';
+                if (settingsIcon) settingsIcon.style.opacity = '0.7';
+            } else if (currentState === 'copied' || currentState === 'success') {
+                // Success state always uses hover style (black bg, white text)
+                button.style.backgroundColor = '#000';
+                button.style.borderColor = '#000';
+                button.style.color = '#fff';
+                if (settingsIcon) settingsIcon.style.opacity = '0.7';
+            } else if (currentState === 'error') {
+                button.style.backgroundColor = '#ef4444';
+                button.style.borderColor = '#ef4444';
+                button.style.color = '#fff';
+                if (settingsIcon) settingsIcon.style.opacity = '0.7';
+            } else {
+                // Default state - apply hover styles if hovering
+                if (isHovering && !operationInProgress) {
+                    button.style.backgroundColor = '#000';
+                    button.style.borderColor = '#000';
+                    button.style.color = '#fff';
+                    if (settingsIcon) settingsIcon.style.opacity = '1';
+                } else {
+                    button.style.backgroundColor = 'transparent';
+                    button.style.borderColor = '#000';
+                    button.style.color = '#000';
+                    if (settingsIcon) settingsIcon.style.opacity = '0.7';
+                }
+            }
+        }
+
+        // Add hover effects like other main buttons
+        button.addEventListener('mouseenter', function () {
+            isHovering = true;
+            applyCurrentStyles();
+        });
+
+        button.addEventListener('mouseleave', function () {
+            isHovering = false;
+            applyCurrentStyles();
+        });
+
+        // Function to update button state with progress
+        function updateButtonState(state, text, progress = null) {
+            currentState = state;
+            const textSpan = button.querySelector('.aifix-text');
+            const progressContainer = button.querySelector('.aifix-progress-container');
+            const progressBar = button.querySelector('.aifix-progress-bar');
+            
+            if (text && textSpan) {
+                textSpan.textContent = text;
+            }
+
+            // Handle progress bar visibility and state
+            if (state === 'processing') {
+                // Show progress bar
+                if (progressContainer && progressBar) {
+                    progressContainer.style.opacity = '1';
+                    if (progress !== null) {
+                        progressBar.style.width = `${Math.min(100, Math.max(0, progress))}%`;
+                    } else {
+                        progressBar.style.width = '0%';
+                    }
+                }
+            } else if (state === 'copied' || state === 'success') {
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
+                if (progressBar) {
+                    progressBar.style.width = '100%';
+                    progressBar.style.background = '#10b981';
+                }
+            } else if (state === 'error') {
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
+            } else {
+                // Hide progress bar
+                if (progressContainer) {
+                    progressContainer.style.opacity = '0';
+                }
+                if (progressBar) {
+                    progressBar.style.width = '0%';
+                    progressBar.style.background = '#f59e0b';
+                }
+            }
+            
+            // Apply styles based on state and hover
+            applyCurrentStyles();
+        }
+
+        // Function to reset button after delay
+        function resetButtonAfterDelay(delay = 3000) {
+            if (feedbackTimeout) clearTimeout(feedbackTimeout);
+            feedbackTimeout = setTimeout(() => {
+                operationInProgress = false;
+                updateButtonState(null, 'AI Fix');
+                feedbackTimeout = null;
+            }, delay);
+        }
+
+        // Button click opens settings or performs AI fix
+        button.addEventListener('click', async function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Get button bounds and click position
+            const buttonRect = button.getBoundingClientRect();
+            const clickX = e.clientX;
+
+            // Create a generous buffer zone - if click is in the right 35% of button, treat as settings
+            const buttonWidth = buttonRect.width;
+            const settingsZoneStart = buttonRect.left + (buttonWidth * 0.65); // Right 35% of button
+
+            // If click is in the settings zone (right 35% with buffer), open settings
+            if (clickX >= settingsZoneStart) {
+                console.log('[AI Fix] Settings zone clicked');
+                // Show AI Fix settings popup
+                const aifixSettingsPopup = createAIFixSettingsPopup();
+                aifixSettingsPopup.backdrop.style.display = 'block';
+                aifixSettingsPopup.popup.style.display = 'block';
+                return;
+            }
+
+            if (operationInProgress) {
+                console.log('[AI Fix] Operation in progress, ignoring click...');
+                return;
+            }
+
+            console.log('[AI Fix] ========================================');
+            console.log('[AI Fix] Starting AI Fix process');
+            console.log('[AI Fix] ========================================');
+
+            operationInProgress = true;
+
+            try {
+                // Get current lyrics from editor
+                updateButtonState('processing', 'Reading...', 5);
+                const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
+                    document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+
+                if (!textEditor) {
+                    throw new Error('No lyrics editor found');
+                }
+
+                let currentLyrics = '';
+                if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+                    currentLyrics = textEditor.value;
+                } else if (textEditor.isContentEditable) {
+                    currentLyrics = textEditor.innerText || textEditor.textContent || '';
+                }
+
+                if (!currentLyrics || currentLyrics.trim() === '') {
+                    throw new Error('No lyrics found in editor');
+                }
+
+                const lineCount = currentLyrics.split('\n').length;
+                const charCount = currentLyrics.length;
+                console.log('[AI Fix] Current lyrics length:', charCount);
+                console.log('[AI Fix] Line count:', lineCount);
+                updateButtonState('processing', 'Analyzing...', 10);
+
+                // Check if provider is set
+                if (autoscribeSettings.formattingProvider === 'none') {
+                    throw new Error('No AI provider selected. Please select a provider in the settings.');
+                }
+
+                const provider = autoscribeSettings.formattingProvider;
+                console.log('[AI Fix] Using formatting provider:', provider);
+                updateButtonState('processing', 'Preparing...', 15);
+
+                let resultText = currentLyrics;
+
+                // Shared style guide for AI fix (used by all providers)
+                const styleGuide = `Format lyrics to Genius style. Follow official streaming version. Have correct and accurate, clean, and concise lyrics. Transcribe the entire song. All repeated sections must be written out in full. If a specific word or format is not covered in this guide, make an educated guess based on the existing rules and the context of the lyric. Type out all repeated lyrics in full each time they occur. Do not use notations like \(x2)\.
 
 **SPELLINGS:** \`I'ma\` (not "I'mma," "Ima,") \`'cause\` (not "cuz," unless about cousin) \`okay\` (not "ok") \`'til\` \`tryna\` \`ayy\` (not aye, ay) \`ho\`/\`hoes\` (not hoe, unless referring to the garden tool)  \`though\` (not "tho") \`y'all\` \`skrrt\` (not "skrt")\`Perc'\` (not Perk, Perky, Percy, unless "perk" is used in another context) \`bougie\` \`shawty\`/\`shorty\` \`lil'\` \`woah\` (not "whoa") \`chopper\` \`oughta\` \`naive\` (not naïve) \`cliché\` \`alright\` \`a.k.a.\` \`GOAT\` \`VIP\` \`ASAP\` (use \`A$AP\` for A$AP Rocky/Mob) \`foenem\` \`bronem\` \`somethin'\` \`nothin'\` \`lo'\` \`switch\`/\`switchy\`/\`switchies\` \`blick\`/\`blicky\`/\`blickies\` \`cuz\` \`T'd\` \`dawgy\` \`slimy\` \`high-speed\` \`E-way\`
 
@@ -5783,28 +7524,162 @@ And my OG snappin', told 'em, "Clear the scene"
 I-I'm like Marilyn Manson (Yeah)
 I'm like— I'm like Marilyn Manson (Yeah)
 I got a lean bladder (Yeah, yeah)`;
-                                
-                                const headerInstructions = autoscribeSettings.useHeaders ? `
 
+                // Build header instructions once for all providers
+                const headerInstructions = `
 **HEADERS:** Use \`[Intro]\` \`[Verse]\` \`[Refrain]\` \`[Pre-Chorus]\` \`[Chorus]\` \`[Bridge]\` \`[Outro]\` to mark song parts. Find chorus first (repeated sections). Add verses between. Number verses like [Verse 1], unless there is only a single verse header in the transcription. Short sections (3 lines max, unless mainly consisting of adlib-type words (like ayy, what, yeah, etc)) starting or ending song before/after chorus = intro/outro. Repeat lyrics under same header if section repeats immediately (no extra space).
-
 Example:
 [Chorus]
 Line one
-Line two` : '';
-                                
-                                const prompt = `You are a lyrics formatter for Genius. Format the following lyrics according to the style guide provided. Output ONLY the formatted lyrics with no preamble, explanation, or commentary. Place the formatted lyrics inside triple backticks (\`\`\`) so they can be easily extracted.
-STYLE GUIDE:
-${styleGuide}${headerInstructions}
-LYRICS TO FORMAT:
-${resultText}
-Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
-                        
-                                console.log('[Autoscribe] Sending request to Gemini API...');
-                                console.log('[Autoscribe] Using model:', autoscribeSettings.geminiModel);
-                                console.log('[Autoscribe] Prompt length:', prompt.length, 'characters');
+Line two
 
-                                const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${autoscribeSettings.geminiModel}:generateContent?key=${geminiApiKey}`, {
+**HEADER RULES:** Never change existing headers unless: it's \`[Hook]\` (change to \`[Chorus]\`), there are no headers (add them), it's a numbered non-verse header like \`[Chorus 2]\` (change to \`[Chorus]\`), or it's not in brackets like \`(CHORUS)\` (change to \`[Chorus]\`).
+
+**EXCLAMATION POINTS:** Never add exclamation points. Remove all exclamation points except after "Ah!".
+
+**PARENTHESES:** Never add content to parentheses that wasn't already there.`;
+
+                if (provider === 'deepseek') {
+                    // DeepSeek formatting
+                    let deepseekApiKey = autoscribeSettings.deepseekApiKey;
+                    if (!deepseekApiKey || deepseekApiKey.trim() === '') {
+                        const promptedKey = prompt('Enter your DeepSeek API key:');
+                        if (!promptedKey || promptedKey.trim() === '') {
+                            throw new Error('No DeepSeek API key provided');
+                        }
+                        deepseekApiKey = promptedKey.trim();
+                        autoscribeSettings.deepseekApiKey = deepseekApiKey;
+                        saveAutoscribeSettings();
+                        console.log('[AI Fix] DeepSeek API key saved to settings');
+                    }
+
+                    console.log('[AI Fix] DeepSeek API key loaded, fixing lyrics...');
+                    updateButtonState('processing', 'Preparing...', 20);
+
+                    const prompt = buildAIFixPrompt(styleGuide, headerInstructions, currentLyrics);
+
+                    console.log('[AI Fix] Sending request to DeepSeek API...');
+                    console.log('[AI Fix] Using model:', autoscribeSettings.deepseekModel);
+                    console.log('[AI Fix] Prompt length:', prompt.length, 'characters');
+
+                    // Create AbortController for timeout
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
+                    // Start animated progress for ~12 seconds
+                    let waitProgress = 25;
+                    updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    const waitInterval = setInterval(() => {
+                        waitProgress = Math.min(75, waitProgress + 2);
+                        updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    }, 400);
+
+                    try {
+                        const deepseekResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${deepseekApiKey}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                model: autoscribeSettings.deepseekModel,
+                                messages: [
+                                    {
+                                        role: 'user',
+                                        content: prompt
+                                    }
+                                ],
+                                stream: false,
+                                temperature: 0.7,
+                                max_tokens: 4096
+                            }),
+                            signal: controller.signal
+                        });
+
+                        clearInterval(waitInterval);
+                        clearTimeout(timeoutId);
+
+                        console.log('[AI Fix] DeepSeek response status:', deepseekResponse.status);
+
+                        if (!deepseekResponse.ok) {
+                            const errorText = await deepseekResponse.text();
+                            console.error('[AI Fix] DeepSeek API error:', errorText);
+                            throw new Error(`DeepSeek API error: ${deepseekResponse.status} - ${errorText}`);
+                        }
+
+                        // Start animated progress for processing
+                        let processProgress = 0;
+                        updateButtonState('processing', 'Processing...', processProgress);
+                        let processInterval = setInterval(() => {
+                            processProgress = Math.min(97, processProgress + 1);
+                            updateButtonState('processing', 'Processing...', processProgress);
+                        }, 300);
+                        
+                        let deepseekData;
+                        try {
+                            deepseekData = await deepseekResponse.json();
+                        } finally {
+                            clearInterval(processInterval);
+                        }
+                        console.log('[AI Fix] DeepSeek response received');
+
+                        if (deepseekData.choices && deepseekData.choices.length > 0) {
+                            let content = deepseekData.choices[0].message.content;
+                            console.log('[AI Fix] AI response length:', content.length);
+                            updateButtonState('processing', 'Extracting...', 90);
+
+                            // Extract content from triple backticks if present
+                            const backtickMatch = content.match(/```(?:lyrics|text)?\s*([\s\S]*?)```/);
+                            if (backtickMatch) {
+                                resultText = backtickMatch[1].trim();
+                                console.log('[AI Fix] Extracted content from backticks');
+                            } else {
+                                resultText = content.trim();
+                                console.log('[AI Fix] Using full response as is');
+                            }
+                        } else {
+                            throw new Error('Invalid DeepSeek API response format');
+                        }
+                    } catch (fetchError) {
+                        clearInterval(waitInterval);
+                        clearTimeout(timeoutId);
+                        if (fetchError.name === 'AbortError') {
+                            throw new Error('Request timeout - took longer than 2 minutes');
+                        }
+                        throw fetchError;
+                    }
+
+                } else if (provider === 'gemini') {
+                    // Gemini formatting (similar structure)
+                    let geminiApiKey = autoscribeSettings.geminiApiKey;
+                    if (!geminiApiKey || geminiApiKey.trim() === '') {
+                        const promptedKey = prompt('Enter your Gemini API key:');
+                        if (!promptedKey || promptedKey.trim() === '') {
+                            throw new Error('No Gemini API key provided');
+                        }
+                        geminiApiKey = promptedKey.trim();
+                        autoscribeSettings.geminiApiKey = geminiApiKey;
+                        saveAutoscribeSettings();
+                        console.log('[AI Fix] Gemini API key saved to settings');
+                    }
+
+                    console.log('[AI Fix] Gemini API key loaded, fixing lyrics...');
+
+                    const prompt = buildAIFixPrompt(styleGuide, headerInstructions, currentLyrics);
+
+                    console.log('[AI Fix] Sending request to Gemini API...');
+                    console.log('[AI Fix] Using model:', autoscribeSettings.geminiModel);
+
+                    // Start animated progress for ~12 seconds
+                    let waitProgress = 25;
+                    updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    const waitInterval = setInterval(() => {
+                        waitProgress = Math.min(75, waitProgress + 2);
+                        updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    }, 400);
+
+                    try {
+                        const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${autoscribeSettings.geminiModel}:generateContent?key=${geminiApiKey}`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json'
@@ -5818,57 +7693,171 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                             })
                         });
 
-                        console.log('[Autoscribe] Gemini response status:', geminiResponse.status);
+                        clearInterval(waitInterval);
+
+                        console.log('[AI Fix] Gemini response status:', geminiResponse.status);
 
                         if (!geminiResponse.ok) {
                             const errorText = await geminiResponse.text();
-                            console.error('[Autoscribe] Gemini API error:', errorText);
-                            throw new Error(`Gemini API error: ${geminiResponse.status}`);
+                            console.error('[AI Fix] Gemini API error:', errorText);
+                            throw new Error(`Gemini API error: ${geminiResponse.status} - ${errorText}`);
                         }
 
-                        const geminiData = await geminiResponse.json();
-                        console.log('[Autoscribe] Gemini response data:', geminiData);
+                        // Start animated progress for processing
+                        let processProgress = 0;
+                        updateButtonState('processing', 'Processing...', processProgress);
+                        let processInterval = setInterval(() => {
+                            processProgress = Math.min(97, processProgress + 1);
+                            updateButtonState('processing', 'Processing...', processProgress);
+                        }, 300);
+                        
+                        let geminiData;
+                        try {
+                            geminiData = await geminiResponse.json();
+                        } finally {
+                            clearInterval(processInterval);
+                        }
+                        console.log('[AI Fix] Gemini response received');
 
-                        // Extract text from Gemini response
-                        if (geminiData.candidates && geminiData.candidates[0] && geminiData.candidates[0].content && geminiData.candidates[0].content.parts && geminiData.candidates[0].content.parts[0]) {
-                            let geminiText = geminiData.candidates[0].content.parts[0].text;
-                            console.log('[Autoscribe] Raw Gemini output:', geminiText);
+                        if (geminiData.candidates && geminiData.candidates.length > 0) {
+                            let content = geminiData.candidates[0].content.parts[0].text;
+                            console.log('[AI Fix] AI response length:', content.length);
+                            updateButtonState('processing', 'Extracting...', 90);
 
-                            // Extract text between triple backticks
-                            const codeBlockMatch = geminiText.match(/```[\s\S]*?\n([\s\S]*?)```/);
-                            if (codeBlockMatch && codeBlockMatch[1]) {
-                                formattedText = codeBlockMatch[1].trim();
-                                console.log('[Autoscribe] ✓ Extracted formatted text from code block');
+                            // Extract content from triple backticks if present
+                            const backtickMatch = content.match(/```(?:lyrics|text)?\s*([\s\S]*?)```/);
+                            if (backtickMatch) {
+                                resultText = backtickMatch[1].trim();
+                                console.log('[AI Fix] Extracted content from backticks');
                             } else {
-                                // Fallback: use the whole response if no code block found
-                                console.warn('[Autoscribe] No code block found, using raw response');
-                                formattedText = geminiText.trim();
-                            }
-
-                            console.log('[Autoscribe] ✓ Lyrics formatted by Gemini');
-                            console.log('[Autoscribe] Formatted text length:', formattedText.length, 'characters');
-                        } else {
-                            throw new Error('Unexpected Gemini response structure');
-                        }
-
-                            } catch (geminiError) {
-                                console.error('[Autoscribe] Gemini formatting error:', geminiError);
-                                console.error('[Autoscribe] Stack:', geminiError.stack);
-                                alert(`Gemini formatting failed: ${geminiError.message}\n\nShowing unformatted lyrics instead.`);
-                                // Continue with unformatted text
+                                resultText = content.trim();
+                                console.log('[AI Fix] Using full response as is');
                             }
                         } else {
-                            console.log('[Autoscribe] No Gemini API key available, skipping formatting');
+                            throw new Error('Invalid Gemini API response format');
                         }
+                    } catch (geminiError) {
+                        clearInterval(waitInterval);
+                        throw geminiError;
                     }
-                } else {
-                    console.log('[Autoscribe] AI formatting disabled in settings');
+
+                } else if (provider === 'openrouter') {
+                    // OpenRouter formatting (OpenAI-compatible API)
+                    let openrouterApiKey = autoscribeSettings.openrouterApiKey;
+                    if (!openrouterApiKey || openrouterApiKey.trim() === '') {
+                        const promptedKey = prompt('Enter your OpenRouter API key:');
+                        if (!promptedKey || promptedKey.trim() === '') {
+                            throw new Error('No OpenRouter API key provided');
+                        }
+                        openrouterApiKey = promptedKey.trim();
+                        autoscribeSettings.openrouterApiKey = openrouterApiKey;
+                        saveAutoscribeSettings();
+                        console.log('[AI Fix] OpenRouter API key saved to settings');
+                    }
+
+                    console.log('[AI Fix] OpenRouter API key loaded, fixing lyrics...');
+
+                    const prompt = buildAIFixPrompt(styleGuide, headerInstructions, currentLyrics);
+
+                    console.log('[AI Fix] Sending request to OpenRouter API...');
+                    console.log('[AI Fix] Using model:', autoscribeSettings.openrouterModel || 'google/gemini-2.0-flash-exp');
+                    console.log('[AI Fix] Prompt length:', prompt.length, 'characters');
+
+                    // Create AbortController for timeout
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+
+                    // Start animated progress for ~12 seconds
+                    let waitProgress = 25;
+                    updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    const waitInterval = setInterval(() => {
+                        waitProgress = Math.min(75, waitProgress + 2);
+                        updateButtonState('processing', 'Waiting for AI...', waitProgress);
+                    }, 400);
+
+                    try {
+                        const openrouterResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${openrouterApiKey}`,
+                                'Content-Type': 'application/json',
+                                'HTTP-Referer': window.location.origin,
+                                'X-Title': 'ScribeTools'
+                            },
+                            body: JSON.stringify({
+                                model: autoscribeSettings.openrouterModel || 'google/gemini-2.0-flash-exp',
+                                messages: [
+                                    {
+                                        role: 'user',
+                                        content: prompt
+                                    }
+                                ],
+                                stream: false,
+                                temperature: 0.7,
+                                max_tokens: 4096
+                            }),
+                            signal: controller.signal
+                        });
+
+                        clearInterval(waitInterval);
+                        clearTimeout(timeoutId);
+
+                        console.log('[AI Fix] OpenRouter response status:', openrouterResponse.status);
+
+                        if (!openrouterResponse.ok) {
+                            const errorText = await openrouterResponse.text();
+                            console.error('[AI Fix] OpenRouter API error:', errorText);
+                            throw new Error(`OpenRouter API error: ${openrouterResponse.status} - ${errorText}`);
+                        }
+
+                        // Start animated progress for processing
+                        let processProgress = 0;
+                        updateButtonState('processing', 'Processing...', processProgress);
+                        let processInterval = setInterval(() => {
+                            processProgress = Math.min(97, processProgress + 1);
+                            updateButtonState('processing', 'Processing...', processProgress);
+                        }, 300);
+                        
+                        let openrouterData;
+                        try {
+                            openrouterData = await openrouterResponse.json();
+                        } finally {
+                            clearInterval(processInterval);
+                        }
+                        console.log('[AI Fix] OpenRouter response received');
+
+                        if (openrouterData.choices && openrouterData.choices.length > 0) {
+                            let content = openrouterData.choices[0].message.content;
+                            console.log('[AI Fix] AI response length:', content.length);
+                            updateButtonState('processing', 'Extracting...', 90);
+
+                            // Extract content from triple backticks if present
+                            const backtickMatch = content.match(/```(?:lyrics|text)?\s*([\s\S]*?)```/);
+                            if (backtickMatch) {
+                                resultText = backtickMatch[1].trim();
+                                console.log('[AI Fix] Extracted content from backticks');
+                            } else {
+                                resultText = content.trim();
+                                console.log('[AI Fix] Using full response as is');
+                            }
+                        } else {
+                            throw new Error('Invalid OpenRouter API response format');
+                        }
+                    } catch (fetchError) {
+                        clearInterval(waitInterval);
+                        clearTimeout(timeoutId);
+                        if (fetchError.name === 'AbortError') {
+                            throw new Error('Request timeout - took longer than 2 minutes');
+                        }
+                        throw fetchError;
+                    }
                 }
 
-                // Update resultText to use formatted version
-                resultText = formattedText;
+                console.log('[AI Fix] ✓ AI processing complete');
+                console.log('[AI Fix] Result text length:', resultText.length);
+                console.log('[AI Fix] Line count:', resultText.split('\n').length);
+                updateButtonState('processing', 'Done', 100);
 
-                // Create modal to display result with copy button (to get fresh user activation)
                 const modal = document.createElement('div');
                 modal.style.cssText = `
                     position: fixed;
@@ -5876,12 +7865,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     left: 50%;
                     transform: translate(-50%, -50%);
                     background: white;
-                    padding: 20px;
+                    padding: 25px;
                     border-radius: 8px;
                     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
                     z-index: 10002;
                     max-width: 600px;
-                    width: 90%;
+                    max-height: 80vh;
+                    overflow-y: auto;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                 `;
 
                 const backdrop = document.createElement('div');
@@ -5896,17 +7887,17 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 `;
 
                 const title = document.createElement('h2');
-                title.textContent = 'Transcription Complete! ✓';
+                title.textContent = 'AI Fix Complete! ✓';
                 title.style.cssText = 'margin: 0 0 15px 0; font-size: 20px; color: #10b981;';
 
-                const lineCount = resultText.split('\n').length;
+                const resultLineCount = resultText.split('\n').length;
                 const info = document.createElement('p');
-                info.textContent = `${lineCount} line${lineCount !== 1 ? 's' : ''} • ${resultText.length.toLocaleString()} characters`;
+                info.innerHTML = `${resultLineCount} line${resultLineCount !== 1 ? 's' : ''} • ${resultText.length.toLocaleString()} characters<br><em style="color: #999; font-size: 12px;">Review the changes before applying</em>`;
                 info.style.cssText = 'margin: 0 0 15px 0; color: #666;';
 
                 const textarea = document.createElement('textarea');
                 textarea.value = resultText;
-                textarea.readOnly = true;
+                textarea.readOnly = false;
                 textarea.style.cssText = `
                     width: 100%;
                     height: 300px;
@@ -5921,90 +7912,20 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     white-space: pre-wrap;
                 `;
 
-                const buttonContainer = document.createElement('div');
-                buttonContainer.style.cssText = 'display: flex; gap: 10px; justify-content: flex-end;';
-
-                const copyButton = document.createElement('button');
-                copyButton.textContent = 'Copy to Clipboard';
-                copyButton.style.cssText = `
-                    background: #10b981;
-                    color: white;
-                    border: none;
-                    padding: 10px 20px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 500;
-                `;
-
-                const closeButton = document.createElement('button');
-                closeButton.textContent = 'Close';
-                closeButton.style.cssText = `
-                    background: #6c757d;
-                    color: white;
-                    border: none;
-                    padding: 10px 20px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 14px;
-                    font-weight: 500;
-                `;
-
-                // Copy button handler
-                copyButton.addEventListener('click', async () => {
-                    try {
-                        // Try modern API first
-                        await navigator.clipboard.writeText(resultText);
-                        console.log('[Autoscribe] ✓ Copied to clipboard via Clipboard API');
-                        copyButton.textContent = 'Copied! ✓';
-                        copyButton.style.background = '#059669';
-                        setTimeout(() => {
-                            backdrop.remove();
-                            modal.remove();
-                            updateButtonState('copied', 'Copied');
-                            resetButtonAfterDelay(2000);
-                        }, 500);
-                    } catch (err) {
-                        console.warn('[Autoscribe] Clipboard API failed, trying execCommand:', err.message);
-                        // Fallback to execCommand
-                        textarea.select();
-                        const successful = document.execCommand('copy');
-                        if (successful) {
-                            console.log('[Autoscribe] ✓ Copied to clipboard via execCommand');
-                            copyButton.textContent = 'Copied! ✓';
-                            copyButton.style.background = '#059669';
-                            setTimeout(() => {
-                                backdrop.remove();
-                                modal.remove();
-                                updateButtonState('copied', 'Copied');
-                                resetButtonAfterDelay(2000);
-                            }, 500);
-                        } else {
-                            console.error('[Autoscribe] Both copy methods failed');
-                            alert('Copy failed! Please manually select and copy the text above.');
-                        }
-                    }
-                });
-
-                // Close button handler
-                closeButton.addEventListener('click', () => {
-                    backdrop.remove();
-                    modal.remove();
-                    updateButtonState(null, 'Autoscribe');
-                    operationInProgress = false;
-                });
-
-                // Backdrop click to close
-                backdrop.addEventListener('click', () => {
-                    backdrop.remove();
-                    modal.remove();
-                    updateButtonState(null, 'Autoscribe');
-                    operationInProgress = false;
+                // Create buttons using shared function
+                const buttonContainer = createResultModalButtons({
+                    textEditor: textEditor,
+                    textarea: textarea,
+                    backdrop: backdrop,
+                    modal: modal,
+                    updateButtonState: updateButtonState,
+                    resetButtonAfterDelay: resetButtonAfterDelay,
+                    setOperationInProgress: (value) => { operationInProgress = value; },
+                    featureName: 'AI Fix',
+                    initialText: resultText
                 });
 
                 // Assemble modal
-                buttonContainer.appendChild(copyButton);
-                buttonContainer.appendChild(closeButton);
                 modal.appendChild(title);
                 modal.appendChild(info);
                 modal.appendChild(textarea);
@@ -6017,55 +7938,26 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 // Update button state
                 updateButtonState('copied', 'Ready');
 
-                console.log('[Autoscribe] ========================================');
-                console.log('[Autoscribe] Autoscribe process completed successfully!');
-                console.log('[Autoscribe] Modal displayed with copy button');
-                console.log('[Autoscribe] ========================================');
+                console.log('[AI Fix] ========================================');
+                console.log('[AI Fix] AI Fix process completed successfully!');
+                console.log('[AI Fix] Modal displayed with apply/copy buttons');
+                console.log('[AI Fix] ========================================');
 
             } catch (error) {
-                console.error('[Autoscribe] ========================================');
-                console.error('[Autoscribe] ERROR in Autoscribe process:');
-                console.error('[Autoscribe]', error.message);
-                console.error('[Autoscribe] Stack trace:', error.stack);
-                console.error('[Autoscribe] ========================================');
+                console.error('[AI Fix] ========================================');
+                console.error('[AI Fix] ERROR in AI Fix process:');
+                console.error('[AI Fix]', error.message);
+                console.error('[AI Fix] Stack trace:', error.stack);
+                console.error('[AI Fix] ========================================');
 
                 updateButtonState('error', 'Error');
-                alert(`Autoscribe Error: ${error.message}\n\nCheck console for details.`);
+                alert(`AI Fix Error: ${error.message}\n\nCheck console for details.`);
                 resetButtonAfterDelay(5000);
+                operationInProgress = false;
             }
-
-            // Reset file input
-            fileInput.value = '';
         });
 
-        // Button click opens file dialog or settings
-        button.addEventListener('click', function(e) {
-            // Check if settings icon was clicked
-            const settingsIcon = button.querySelector('.settings-icon');
-            const clickedSettings = settingsIcon && (e.target === settingsIcon || settingsIcon.contains(e.target));
-
-            if (clickedSettings) {
-                console.log('[Autoscribe] Settings icon clicked');
-                // Show settings popup
-                const autoscribeSettingsPopup = createAutoscribeSettingsPopup();
-                autoscribeSettingsPopup.backdrop.style.display = 'block';
-                autoscribeSettingsPopup.popup.style.display = 'block';
-                return;
-            }
-
-            e.preventDefault();
-            e.stopPropagation();
-
-            if (operationInProgress) {
-                console.log('[Autoscribe] Operation in progress, ignoring click...');
-                return;
-            }
-
-            console.log('[Autoscribe] Button clicked, opening file dialog...');
-            fileInput.click();
-        });
-
-        console.log('[Autoscribe] Button created successfully');
+        console.log('[AI Fix] Button created successfully');
         return button;
     }
 
@@ -6119,8 +8011,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         document.head.appendChild(style);
 
         // Prevent selection with events
-        button.onselectstart = function() { return false; };
-        button.onmousedown = function(e) {
+        button.onselectstart = function () { return false; };
+        button.onmousedown = function (e) {
             if (e.detail > 1) { // Prevent multiple clicks
                 e.preventDefault();
                 return false;
@@ -6128,7 +8020,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         };
 
         // Copy zero-width space to clipboard
-        button.addEventListener('click', function(e) {
+        button.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -6307,15 +8199,15 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         executeButton.title = 'Replace all occurrences';
         Object.assign(executeButton.style, BUTTON_STYLES.innerButton);
 
-        executeButton.addEventListener('mouseenter', function() {
+        executeButton.addEventListener('mouseenter', function () {
             executeButton.style.backgroundColor = '#f5f5f5';
         });
 
-        executeButton.addEventListener('mouseleave', function() {
+        executeButton.addEventListener('mouseleave', function () {
             executeButton.style.backgroundColor = 'transparent';
         });
 
-        executeButton.addEventListener('click', function() {
+        executeButton.addEventListener('click', function () {
             performReplace();
         });
 
@@ -6364,7 +8256,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         });
 
         let caseSensitive = false;
-        caseSensitiveButton.addEventListener('click', function() {
+        caseSensitiveButton.addEventListener('click', function () {
             caseSensitive = !caseSensitive;
             if (caseSensitive) {
                 caseSensitiveButton.style.backgroundColor = '#000';
@@ -6381,7 +8273,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             }
         });
 
-        undoButton.addEventListener('click', function() {
+        undoButton.addEventListener('click', function () {
             if (!undoButton.disabled) {
                 undoFindReplace();
             }
@@ -6406,7 +8298,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         // Handle Enter key in inputs to trigger replace
         [findInput, replaceInput].forEach(input => {
-            input.addEventListener('keydown', function(e) {
+            input.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     performReplace();
@@ -6421,9 +8313,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     function performFindReplaceAll(findText, replaceText, caseSensitive = false) {
         // Find the active text editor
         const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
-                          document.querySelector('textarea') ||
-                          document.querySelector('[contenteditable="true"]');
+            document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+            document.querySelector('textarea') ||
+            document.querySelector('[contenteditable="true"]');
 
         if (!textEditor) {
             alert('No text editor found');
@@ -6487,10 +8379,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Trigger input event to notify any listeners
         textEditor.dispatchEvent(new Event('input', { bubbles: true }));
         textEditor.dispatchEvent(new Event('change', { bubbles: true }));
-        
+
         // Resize textarea to fit new content
         resizeTextareaToFit(textEditor);
-        
+
         // Force layout recalculation
         void textEditor.offsetHeight;
 
@@ -6504,14 +8396,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             undoButton.style.backgroundColor = 'transparent';
             undoButton.style.borderColor = '#666';
 
-            undoButton.addEventListener('mouseenter', function() {
+            undoButton.addEventListener('mouseenter', function () {
                 if (!undoButton.disabled) {
                     undoButton.style.backgroundColor = '#f5f5f5';
                     undoButton.style.borderColor = '#999';
                 }
             });
 
-            undoButton.addEventListener('mouseleave', function() {
+            undoButton.addEventListener('mouseleave', function () {
                 if (!undoButton.disabled) {
                     undoButton.style.backgroundColor = 'transparent';
                     undoButton.style.borderColor = '#666';
@@ -6602,7 +8494,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         `;
 
         // Add hover effects like Genius buttons
-        button.addEventListener('mouseenter', function() {
+        button.addEventListener('mouseenter', function () {
             button.style.backgroundColor = '#000';
             button.style.color = '#fff';
             // Make settings icon more visible on hover
@@ -6610,7 +8502,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             if (settingsIcon) settingsIcon.style.opacity = '1';
         });
 
-        button.addEventListener('mouseleave', function() {
+        button.addEventListener('mouseleave', function () {
             button.style.backgroundColor = 'transparent';
             button.style.color = '#000';
             // Reset settings icon opacity
@@ -6619,7 +8511,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         });
 
         // Combined click functionality
-        button.addEventListener('click', function(e) {
+        button.addEventListener('click', function (e) {
             e.preventDefault();
             e.stopPropagation();
 
@@ -6642,384 +8534,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         return button;
     }
-    // Function to convert numbers to text according to Genius guidelines
-    function convertNumbersToText(text) {
-        // Whitelisted numbers that should never be converted
-        const whitelist = ['1600', '3500', '1629', '808', '360', '999', '1337', '420', '187'];
 
-        // Number to text mappings
-        const ones = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-                     'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
-                     'seventeen', 'eighteen', 'nineteen'];
-
-        const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-
-        function numberToWords(num) {
-            if (num === 0) return 'zero';
-
-            let result = '';
-
-            // Handle thousands
-            if (num >= 1000) {
-                const thousands = Math.floor(num / 1000);
-                if (thousands <= 19) {
-                    result += ones[thousands] + ' thousand';
-                } else {
-                    const thousandsTens = Math.floor(thousands / 10);
-                    const thousandsOnes = thousands % 10;
-                    result += tens[thousandsTens];
-                    if (thousandsOnes > 0) result += '-' + ones[thousandsOnes];
-                    result += ' thousand';
-                }
-                num %= 1000;
-                if (num > 0) result += ' ';
-            }
-
-            // Handle hundreds
-            if (num >= 100) {
-                const hundreds = Math.floor(num / 100);
-
-                // Special case for multiples of 100 in thousands (e.g., 3500 = thirty-five hundred)
-                if (num % 100 === 0 && result.includes('thousand')) {
-                    // Remove the "thousand" part and use "hundred" format
-                    const totalHundreds = Math.floor((parseInt(text.match(/\d+/)[0]) || 0) / 100);
-                    if (totalHundreds <= 99) {
-                        if (totalHundreds <= 19) {
-                            return ones[totalHundreds] + ' hundred';
-                        } else {
-                            const hundredsTens = Math.floor(totalHundreds / 10);
-                            const hundredsOnes = totalHundreds % 10;
-                            let hundredResult = tens[hundredsTens];
-                            if (hundredsOnes > 0) hundredResult += '-' + ones[hundredsOnes];
-                            return hundredResult + ' hundred';
-                        }
-                    }
-                }
-
-                result += ones[hundreds] + ' hundred';
-                num %= 100;
-                if (num > 0) result += ' ';
-            }
-
-            // Handle tens and ones
-            if (num >= 20) {
-                const tensDigit = Math.floor(num / 10);
-                const onesDigit = num % 10;
-                result += tens[tensDigit];
-                if (onesDigit > 0) result += '-' + ones[onesDigit];
-            } else if (num > 0) {
-                result += ones[num];
-            }
-
-            return result.trim();
-        }
-
-        // Handle special "hunnid" format for round hundreds
-        function handleHundreds(num) {
-            if (num % 100 === 0 && num >= 100) {
-                const hundreds = num / 100;
-                if (hundreds <= 19) {
-                    return ones[hundreds] + ' hundred';
-                } else {
-                    const tensDigit = Math.floor(hundreds / 10);
-                    const onesDigit = hundreds % 10;
-                    let result = tens[tensDigit];
-                    if (onesDigit > 0) result += '-' + ones[onesDigit];
-                    return result + ' hundred';
-                }
-            }
-            return numberToWords(num);
-        }
-
-        // Create protected ranges for exemptions - same order as findConvertibleNumbers
-        let protectedRanges = [];
-        let protectedIndex = 0;
-
-        // 1. FIRST: Protect entire square bracket sections (highest priority)
-        text = text.replace(/\[[^\]]*\]/g, function(match) {
-            const placeholder = `__BRACKET_SECTION_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 1.5. Handle "X hundred" patterns early (like "10 hundred" = "one thousand")
-        text = text.replace(/\b(\d+)\s+hundred\b/gi, function(match, numStr) {
-            const num = parseInt(numStr);
-            let converted;
-            if (num === 10) converted = 'one thousand';
-            else if (num === 20) converted = 'two thousand';
-            else if (num === 30) converted = 'three thousand';
-            else converted = numberToWords(num) + ' hundred';
-
-            // Don't protect, just convert directly
-            return converted;
-        });
-
-        // 2. Protect phone numbers (need to be before general number patterns)
-        // Standard phone formats: 555-123-4567, 555.123.4567, etc.
-        text = text.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, function(match) {
-            const placeholder = `__PHONE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Also protect shorter phone patterns like 867-5309
-        text = text.replace(/\b\d{3}-\d{4}\b/g, function(match) {
-            const placeholder = `__PHONE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 3. Protect times (need to be before general number patterns)
-        const timePatterns = [
-            /\b(\d{1,2}):(\d{2})\s*(a\.m\.|p\.m\.|AM|PM|am|pm)?\b/g,
-            /\b(\d{1,2})\s*(a\.m\.|p\.m\.|AM|PM|am|pm)\b/g,
-            /\b(\d{1,2})\s*o'clock\b/gi,
-            /\b(\d)\s*(a\.m\.|p\.m\.|AM|PM|am|pm)\b/g  // Single digit times like "6 a.m."
-        ];
-
-        timePatterns.forEach(pattern => {
-            text = text.replace(pattern, function(match) {
-                let normalizedTime = match;
-
-                // Normalize time format
-                normalizedTime = normalizedTime.replace(/\b(\d{1,2}):00\s*(a\.m\.|p\.m\.)/gi, '$1 $2');
-                normalizedTime = normalizedTime.replace(/\b(am|AM)\b/g, 'a.m.');
-                normalizedTime = normalizedTime.replace(/\b(pm|PM)\b/g, 'p.m.');
-                normalizedTime = normalizedTime.replace(/\b(\d{1,2})\s*O'clock/gi, '$1 o\'clock');
-
-                const placeholder = `__TIME_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: normalizedTime });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 4. Protect decimals (3.5, .9, 0.75, etc.) - MUST include decimals starting with just a dot
-        text = text.replace(/\b\d*\.\d+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Also protect decimals that start with just a period (like .380, .45)
-        text = text.replace(/\.\d+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Protect decimals followed by units (like 7.62mm)
-        text = text.replace(/\b\d+\.\d+[a-zA-Z]+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 4.5. Protect percentages (number followed by %)
-        text = text.replace(/\b\d+%/g, function(match) {
-            const placeholder = `__PERCENTAGE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        text = text.replace(/\b\d+\.\d+%/g, function(match) {
-            const placeholder = `__PERCENTAGE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 5. Protect ALL 4-digit and longer numbers (years, addresses, IDs, etc. - too complex to differentiate)
-        text = text.replace(/\b\d{4,}s?\b/g, function(match) {
-            const placeholder = `__FOURDIGIT_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 6. Protect specific compound words and model numbers
-        // Only protect if it's truly a compound word (not just plural 's')
-        text = text.replace(/\b\d+[a-rt-z]\w+\b/gi, function(match) {
-            const placeholder = `__COMPOUND_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        text = text.replace(/\b[a-zA-Z]+\d+\b/g, function(match) {
-            const placeholder = `__LETTER_NUM_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 7. Protect firearm calibers
-        text = text.replace(/\b\.\d{3}\b/g, function(match) {
-            const placeholder = `__CALIBER_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        text = text.replace(/\b\d+mm\b/gi, function(match) {
-            const placeholder = `__MM_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 8. Protect specific proper nouns
-        const properNouns = [
-            /\b(Royce\s+da\s+5'9"?)\b/gi,
-            /\b(Nintendo\s+64)\b/gi,
-            /\b(Area\s+51)\b/gi,
-            /\b(iPhone\s*\d+)\b/gi,
-            /\b(PlayStation\s*\d+)\b/gi,
-            /\b(Xbox\s*(360|One|Series\s*[XS]|\d+))\b/gi
-        ];
-
-        properNouns.forEach(pattern => {
-            text = text.replace(pattern, function(match) {
-                const placeholder = `__PROPER_NOUN_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 9. Protect common numerical terms
-        const numericalTerms = [
-            /\b24\/7\b/g,
-            /\b365\b/g,
-            /\b911\b/g,
-            /\b411\b/g
-        ];
-
-        numericalTerms.forEach(pattern => {
-            text = text.replace(pattern, function(match) {
-                const placeholder = `__TERM_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 10. Protect police numerical slang
-        text = text.replace(/\b5-0\b/g, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Only protect "12" when it's clearly police slang (with context words)
-        text = text.replace(/\b12\b(?=\s+(?:pulling|watching|coming|on\s+the|is\s+the|are\s+the))/gi, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        text = text.replace(/(?:the\s+)\b12\b/gi, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 11. Protect whitelisted numbers
-        whitelist.forEach(num => {
-            const pattern = new RegExp(`\\b${num}\\b`, 'g');
-            text = text.replace(pattern, function(match) {
-                const placeholder = `__WHITELIST_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-                // 12. Protect K numbers that are not multiples of 100
-         text = text.replace(/\b(\d+)K\b/gi, function(match, num) {
-             const numVal = parseInt(num);
-             if (numVal % 100 !== 0) {
-                 const placeholder = `__K_NUMBER_${protectedIndex}__`;
-                 protectedRanges.push({ placeholder, original: match });
-                 protectedIndex++;
-                 return placeholder;
-             }
-             return match; // Keep for conversion - this allows 100K, 200K, etc. to be converted
-         });
-
-        // 13. Protect model numbers (single letter + number)
-        text = text.replace(/\b[A-Z]\d+\b/g, function(match) {
-            const placeholder = `__MODEL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Handle plural numbers ending in 's' (convert number part and keep plural)
-        text = text.replace(/\b(\d+)s\b/g, function(match, numStr) {
-            const num = parseInt(numStr);
-
-            // Special handling for common plural forms
-            if (num % 100 === 0 && num >= 100) {
-                const hundreds = num / 100;
-                if (hundreds <= 19) {
-                    return ones[hundreds] + ' hundreds';
-                } else {
-                    const tensDigit = Math.floor(hundreds / 10);
-                    const onesDigit = hundreds % 10;
-                    let result = tens[tensDigit];
-                    if (onesDigit > 0) result += '-' + ones[onesDigit];
-                    return result + ' hundreds';
-                }
-            } else if (num >= 20 && num < 100 && num % 10 === 0) {
-                // For round tens (20s, 30s, etc.)
-                const tensDigit = Math.floor(num / 10);
-                return tens[tensDigit].slice(0, -1) + 'ies'; // twenty -> twenties
-            } else {
-                // For other numbers, add 's' or 'es' appropriately
-                const wordForm = numberToWords(num);
-                // Numbers ending in 'x' need 'es' (six -> sixes)
-                if (wordForm.endsWith('x')) {
-                    return wordForm + 'es';
-                }
-                return wordForm + 's';
-            }
-        });
-
-        // Convert remaining numbers
-        text = text.replace(/\b\d+\b/g, function(match) {
-            const num = parseInt(match);
-
-            // Handle special cases for multiples of 100
-            if (num % 100 === 0 && num >= 100) {
-                return handleHundreds(num);
-            }
-
-            return numberToWords(num);
-        });
-
-        // Restore protected content
-        protectedRanges.forEach(({ placeholder, original }) => {
-            text = text.replace(placeholder, original);
-        });
-
-        return text;
-    }
-
-    // Interactive number conversion system
+    // Interactive fix system
     let currentInteractivePopup = null;
-    let declinedNumbers = new Set(); // Track numbers user said "no" to on this page
 
     function computeRuleReplacement(rule, match) {
         if (!rule || !match) {
@@ -7141,25 +8658,30 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     // Helper function to resize textarea to fit content
     function resizeTextareaToFit(textarea) {
         if (textarea.tagName === 'TEXTAREA') {
+            // Skip if this is a hidden original textarea (custom editor is active)
+            if (textarea._customEditorActive) {
+                return;
+            }
+
             // Store current style
             const currentHeight = textarea.style.height;
             const currentOverflow = textarea.style.overflow;
-            
+
             // Hide scrollbar temporarily
             textarea.style.overflow = 'hidden';
-            
+
             // Reset height to auto to get proper scrollHeight
             textarea.style.height = 'auto';
-            
+
             // Set to scrollHeight + small buffer to accommodate all content
             textarea.style.height = (textarea.scrollHeight + 2) + 'px';
-            
+
             // Restore overflow
             textarea.style.overflow = currentOverflow || '';
-            
+
             // Force a reflow
             void textarea.offsetHeight;
-            
+
             // For Firefox, also trigger on next frame
             requestAnimationFrame(() => {
                 textarea.style.height = 'auto';
@@ -7187,10 +8709,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             textEditor.value = newValue;
             textEditor.dispatchEvent(new Event('input', { bubbles: true }));
             textEditor.dispatchEvent(new Event('change', { bubbles: true }));
-            
+
             // Resize textarea to fit new content
             resizeTextareaToFit(textEditor);
-            
+
             // Force layout recalculation
             void textEditor.offsetHeight;
             return true;
@@ -7211,7 +8733,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             textEditor.textContent = newContent;
             textEditor.dispatchEvent(new Event('input', { bubbles: true }));
             textEditor.dispatchEvent(new Event('change', { bubbles: true }));
-            
+
             // Force layout recalculation
             void textEditor.offsetHeight;
             return true;
@@ -7232,43 +8754,53 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         if (!text) return -1;
 
-        if (!hasChanges) {
-            const textAtPosition = text.slice(match.position, match.position + match.original.length);
-            if (textAtPosition === match.original) {
-                return match.position;
+        // Always check the stored position first, even if hasChanges is true
+        // The position might still be valid if changes were elsewhere in the text
+        const textAtPosition = text.slice(match.position, match.position + match.original.length);
+        if (textAtPosition === match.original) {
+            return match.position;
+        }
+
+        // Position doesn't match - search for all occurrences and find the one closest to stored position
+        const escaped = match.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(escaped, 'g');
+        const allOccurrences = [];
+        let execResult;
+        while ((execResult = regex.exec(text)) !== null) {
+            allOccurrences.push(execResult.index);
+        }
+
+        if (allOccurrences.length === 0) {
+            return -1;
+        }
+
+        // Find the occurrence closest to the stored position
+        let closestIndex = allOccurrences[0];
+        let closestDistance = Math.abs(allOccurrences[0] - match.position);
+        for (let i = 1; i < allOccurrences.length; i++) {
+            const distance = Math.abs(allOccurrences[i] - match.position);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestIndex = allOccurrences[i];
             }
         }
 
-        const searchStart = Math.max(0, match.position - 100);
-        const searchEnd = Math.min(text.length, match.position + 100);
-        const searchArea = text.slice(searchStart, searchEnd);
-        const escaped = match.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(escaped);
-        const localMatch = regex.exec(searchArea);
-        if (localMatch) {
-            return searchStart + localMatch.index;
-        }
-
-        const fullMatch = regex.exec(text);
-        if (fullMatch) {
-            return fullMatch.index;
-        }
-
-        return -1;
+        return closestIndex;
     }
+
     function showInteractiveFixPopup(textEditor, match, handlers, context = {}) {
         const { onYes, onNo, onNoToAll } = handlers || {};
         const { groupMatches, allMatches } = context;
 
         cleanupCurrentInteractivePopup();
-        
+
         // Determine if we're in grouped mode: check if groupMatches exists and has multiple items
         const isGroupedMode = groupMatches && groupMatches.length > 1;
-        
+
         // Highlight all matches: grouped matches (priority), all remaining matches, or just the single match
+        // Always use freshly passed matches to ensure we have the latest positions
         const matches = groupMatches || allMatches || [match];
-        const sortedMatches = textEditor._highlightState?.matches || [...matches].sort((a, b) => a.position - b.position);
-        const highlightState = textEditor._highlightState || {};
+        const sortedMatches = [...matches].sort((a, b) => a.position - b.position);
 
         let currentMatchIndex = sortedMatches.findIndex(m => (m === match) || (m.position === match.position && m.original === match.original));
         if (currentMatchIndex === -1) {
@@ -7326,16 +8858,16 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         if (isGroupedMode) {
             // Show summary for multiple matches in group
             questionText = `Apply <strong style="color: #4ee153;">${sortedMatches.length} changes</strong> for this rule?`;
-            
+
             // Add a preview of the changes
             const changesPreview = sortedMatches.slice(0, 5).map(m => {
                 return `<div style="margin: 4px 0; font-size: 11px; padding: 4px; background: rgba(255,255,255,0.05); border-radius: 3px;">
                     <strong style="color: #ffeb3b;">${escapeHTML(m.original)}</strong> → <strong style="color: #4ee153;">${escapeHTML(m.replacement)}</strong>
                 </div>`;
             }).join('');
-            
+
             const moreCount = sortedMatches.length > 5 ? `<div style="margin: 4px 0; font-size: 11px; color: rgba(255,255,255,0.6);">...and ${sortedMatches.length - 5} more</div>` : '';
-            
+
             questionText += `<div style="margin-top: 8px;">${changesPreview}${moreCount}</div>`;
         } else {
             // Single match question
@@ -7358,8 +8890,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         `;
 
         const yesBtn = document.createElement('button');
-        yesBtn.textContent = isGroupedMode 
-            ? `Yes to all ${sortedMatches.length} (Enter)` 
+        yesBtn.textContent = isGroupedMode
+            ? `Yes to all ${sortedMatches.length} (Enter)`
             : 'Yes (Enter)';
         yesBtn.style.cssText = `
             background: rgba(76, 175, 80, 0.9);
@@ -7375,8 +8907,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         `;
 
         const noBtn = document.createElement('button');
-        noBtn.textContent = isGroupedMode 
-            ? `No to all ${sortedMatches.length} (Esc)` 
+        noBtn.textContent = isGroupedMode
+            ? `No to all ${sortedMatches.length} (Esc)`
             : 'No (Esc)';
         noBtn.style.cssText = `
             background: rgba(158, 158, 158, 0.7);
@@ -7397,7 +8929,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // 2. We're NOT in grouped mode (where "No" already declines all matches in the group)
         //    OR we're in grouped mode but there are more groups after this one
         const shouldShowNoToAll = onNoToAll && (!isGroupedMode || (context.totalGroups && context.currentGroup < context.totalGroups - 1));
-        
+
         if (shouldShowNoToAll) {
             const remainingCount = Math.max(1, (context.totalMatches || 0) - (context.currentIndex || 0));
             noToAllBtn = document.createElement('button');
@@ -7442,7 +8974,6 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         yesBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            removeInteractiveHighlight(textEditor);
             cleanupCurrentInteractivePopup();
             if (onYes) onYes();
         });
@@ -7450,7 +8981,6 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         noBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            removeInteractiveHighlight(textEditor);
             cleanupCurrentInteractivePopup();
             if (onNo) onNo();
         });
@@ -7459,7 +8989,6 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             noToAllBtn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                removeInteractiveHighlight(textEditor);
                 cleanupCurrentInteractivePopup();
                 onNoToAll();
             });
@@ -7468,12 +8997,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         const keyHandler = (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                removeInteractiveHighlight(textEditor);
                 cleanupCurrentInteractivePopup();
                 if (onYes) onYes();
             } else if (e.key === 'Escape') {
                 e.preventDefault();
-                removeInteractiveHighlight(textEditor);
                 cleanupCurrentInteractivePopup();
                 if (onNo) onNo();
             }
@@ -7494,7 +9021,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         updatePosition();
 
         document.body.appendChild(popup);
-        currentInteractivePopup = { popup, keyHandler, updatePosition, scrollTarget: textEditor };
+        currentInteractivePopup = { popup, keyHandler, updatePosition, scrollTarget: textEditor, textEditor };
     }
 
     function processInteractiveFixes(textEditor, matches, options = {}) {
@@ -7511,7 +9038,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         // Check if we should group by rule
         const shouldGroupByRule = autoFixSettings.groupFixesByRule;
-        
+
         if (shouldGroupByRule) {
             // Group matches by rule
             const ruleGroups = new Map();
@@ -7522,10 +9049,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 }
                 ruleGroups.get(ruleId).push(match);
             });
-            
+
             // Convert to array of groups
             const groups = Array.from(ruleGroups.values());
-            
+
             const stepGroup = (groupIndex) => {
                 if (groupIndex >= groups.length) {
                     console.log('Interactive fixes completed');
@@ -7534,9 +9061,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     }
                     return;
                 }
-                
+
                 const group = groups[groupIndex];
-                
+
                 // Update positions for all matches in group
                 const validMatches = [];
                 for (let i = 0; i < group.length; i++) {
@@ -7548,12 +9075,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                         console.log('Interactive match not found, skipping:', match.original);
                     }
                 }
-                
+
                 if (validMatches.length === 0) {
                     stepGroup(groupIndex + 1);
                     return;
                 }
-                
+
                 // Show popup for the group (with first match as primary)
                 showInteractiveFixPopup(textEditor, validMatches[0], {
                     onYes: () => {
@@ -7569,14 +9096,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                 }
                                 const lengthDiff = adjustedMatch.replacement.length - adjustedMatch.original.length;
                                 cumulativeLengthDiff += lengthDiff;
-                                
+
                                 // Update positions of subsequent matches in the group
                                 for (let i = idx + 1; i < validMatches.length; i++) {
                                     if (validMatches[i].position > currentMatch.position) {
                                         validMatches[i].position += lengthDiff;
                                     }
                                 }
-                                
+
                                 // Update positions of matches in subsequent groups
                                 for (let gi = groupIndex + 1; gi < groups.length; gi++) {
                                     groups[gi].forEach(m => {
@@ -7587,7 +9114,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                                 }
                             }
                         });
-                        
+
                         stepGroup(groupIndex + 1);
                     },
                     onNo: () => {
@@ -7620,7 +9147,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     currentGroup: groupIndex
                 });
             };
-            
+
             stepGroup(0);
         } else {
             // Original behavior: one match at a time
@@ -7642,7 +9169,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 }
 
                 const currentMatch = { ...match, position };
-                
+
                 // Collect all remaining matches for highlighting (including current)
                 const allRemainingMatches = [];
                 for (let i = currentIndex; i < queue.length; i++) {
@@ -7695,591 +9222,6 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             step(0);
         }
     }
-
-    // Function to create unique ID for a number instance
-    function createNumberUID(text, position, numberText) {
-        // Create context around the number for uniqueness
-        const contextStart = Math.max(0, position - 20);
-        const contextEnd = Math.min(text.length, position + numberText.length + 20);
-        const context = text.slice(contextStart, contextEnd);
-
-        // Create UID from number, position, and context
-        return `${numberText}_${position}_${context.replace(/\s+/g, '_')}`;
-    }
-
-    // Function to get localStorage key for declined numbers on this page
-    function getDeclinedNumbersKey() {
-        const url = window.location.href;
-        const baseUrl = url.split('?')[0].split('#')[0]; // Remove query params and hash
-        return `genius-declined-numbers-${baseUrl}`;
-    }
-
-    // Function to save declined numbers to localStorage
-    function saveDeclinedNumbers() {
-        try {
-            const now = Date.now();
-            const dataToSave = {};
-
-            // Convert Set to object with timestamps
-            declinedNumbers.forEach(uid => {
-                dataToSave[uid] = now;
-            });
-
-            localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(dataToSave));
-        } catch (e) {
-        }
-    }
-
-    // Function to load declined numbers from localStorage
-    function loadDeclinedNumbers() {
-        try {
-            const saved = localStorage.getItem(getDeclinedNumbersKey());
-            if (saved) {
-                const data = JSON.parse(saved);
-                const now = Date.now();
-                const oneWeek = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-
-                // Filter out entries older than a week and load valid ones
-                const validEntries = {};
-                Object.keys(data).forEach(uid => {
-                    const timestamp = data[uid];
-                    if (now - timestamp <= oneWeek) {
-                        validEntries[uid] = timestamp;
-                        declinedNumbers.add(uid);
-                    }
-                });
-
-                // Save back the cleaned data if we removed any old entries
-                if (Object.keys(validEntries).length !== Object.keys(data).length) {
-                    localStorage.setItem(getDeclinedNumbersKey(), JSON.stringify(validEntries));
-                }
-            }
-        } catch (e) {
-            console.log('Failed to load declined numbers:', e);
-        }
-    }
-
-    function startInteractiveNumberConversion(textEditor) {
-        if (!textEditor) return;
-
-        let text;
-        if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
-            text = textEditor.value;
-        } else if (textEditor.isContentEditable) {
-            text = textEditor.innerText || textEditor.textContent;
-        }
-
-        if (!text) return;
-
-
-
-        // Find convertible numbers using the same protection logic as convertNumbersToText
-        const convertibleNumbers = findConvertibleNumbers(text);
-
-        if (convertibleNumbers.length === 0) {
-            return;
-        }
-
-        const numberRule = {
-            id: 'numberToText',
-            description: 'Convert numbers to text',
-            formatQuestion: (match) => `Convert <strong style="color: #ffeb3b;">${match.original}</strong> to <strong style="color: #4ee153;">${match.replacement}</strong>?`
-        };
-
-        const matches = convertibleNumbers.map(item => ({
-            original: item.original,
-            replacement: item.converted,
-            position: item.position,
-            uid: item.uid,
-            rule: numberRule
-        }));
-
-        processInteractiveFixes(textEditor, matches, {
-            onDecline: (match) => {
-                if (match.uid) {
-                    declinedNumbers.add(match.uid);
-                    saveDeclinedNumbers();
-                    console.log('Added to declined numbers:', match.uid);
-                }
-            },
-            onDeclineAll: (remainingMatches) => {
-                remainingMatches.forEach(item => {
-                    if (item.uid) {
-                        declinedNumbers.add(item.uid);
-                        console.log('Declined (no to all):', item.original, 'UID:', item.uid);
-                    }
-                });
-                saveDeclinedNumbers();
-            }
-        });
-    }
-    function findConvertibleNumbers(text) {
-        // Use the EXACT same protection logic as convertNumbersToText
-        // but instead of converting, collect the numbers that would be converted
-
-        const whitelist = ['1600', '3500', '1629', '808', '360', '999', '1337', '420', '187'];
-
-        // Apply the same protection logic as convertNumbersToText
-        let workingText = text;
-        let protectedRanges = [];
-        let protectedIndex = 0;
-
-        // 1. FIRST: Protect entire square bracket sections (highest priority)
-        workingText = workingText.replace(/\[[^\]]*\]/g, function(match) {
-
-            const placeholder = `__BRACKET_SECTION_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 1.5. Handle "X hundred" patterns early (like "10 hundred" = "one thousand")
-        workingText = workingText.replace(/\b(\d+)\s+hundred\b/gi, function(match, numStr) {
-            const placeholder = `__X_HUNDRED_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 2. Protect phone numbers
-        workingText = workingText.replace(/\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, function(match) {
-            const placeholder = `__PHONE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b\d{3}-\d{4}\b/g, function(match) {
-            const placeholder = `__PHONE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 3. Protect times
-        const timePatterns = [
-            /\b(\d{1,2}):(\d{2})\s*(a\.m\.|p\.m\.|AM|PM|am|pm)?\b/g,
-            /\b(\d{1,2})\s*(a\.m\.|p\.m\.|AM|PM|am|pm)\b/g,
-            /\b(\d{1,2})\s*o'clock\b/gi,
-            /\b(\d)\s*(a\.m\.|p\.m\.|AM|PM|am|pm)\b/g
-        ];
-
-        timePatterns.forEach(pattern => {
-            workingText = workingText.replace(pattern, function(match) {
-                const placeholder = `__TIME_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 4. Protect decimals
-        workingText = workingText.replace(/\b\d*\.\d+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\.\d+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b\d+\.\d+[a-zA-Z]+\b/g, function(match) {
-            const placeholder = `__DECIMAL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 4.5. Protect percentages
-        workingText = workingText.replace(/\b\d+%/g, function(match) {
-            const placeholder = `__PERCENTAGE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b\d+\.\d+%/g, function(match) {
-            const placeholder = `__PERCENTAGE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 5. Protect ALL 4-digit and longer numbers (including plurals like "1900s")
-        workingText = workingText.replace(/\b\d{4,}s?\b/g, function(match) {
-            const placeholder = `__FOURDIGIT_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 6. Protect compound words and model numbers
-        workingText = workingText.replace(/\b\d+[a-rt-z]\w+\b/gi, function(match) {
-            const placeholder = `__COMPOUND_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b[a-zA-Z]+\d+\b/g, function(match) {
-            const placeholder = `__LETTER_NUM_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 7. Protect firearm calibers
-        workingText = workingText.replace(/\b\.\d{3}\b/g, function(match) {
-            const placeholder = `__CALIBER_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b\d+mm\b/gi, function(match) {
-            const placeholder = `__MM_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 8. Protect proper nouns
-        const properNouns = [
-            /\b(Royce\s+da\s+5'9"?)\b/gi,
-            /\b(Nintendo\s+64)\b/gi,
-            /\b(Area\s+51)\b/gi,
-            /\b(iPhone\s*\d+)\b/gi,
-            /\b(PlayStation\s*\d+)\b/gi,
-            /\b(Xbox\s*(360|One|Series\s*[XS]|\d+))\b/gi
-        ];
-
-        properNouns.forEach(pattern => {
-            workingText = workingText.replace(pattern, function(match) {
-                const placeholder = `__PROPER_NOUN_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 9. Protect common numerical terms
-        const numericalTerms = [
-            /\b24\/7\b/g,
-            /\b365\b/g,
-            /\b911\b/g,
-            /\b411\b/g
-        ];
-
-        numericalTerms.forEach(pattern => {
-            workingText = workingText.replace(pattern, function(match) {
-                const placeholder = `__TERM_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 10. Protect police numerical slang
-        workingText = workingText.replace(/\b5-0\b/g, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/\b12\b(?=\s+(?:pulling|watching|coming|on\s+the|is\s+the|are\s+the))/gi, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        workingText = workingText.replace(/(?:the\s+)\b12\b/gi, function(match) {
-            const placeholder = `__POLICE_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // 11. Protect whitelisted numbers
-        whitelist.forEach(num => {
-            const pattern = new RegExp(`\\b${num}\\b`, 'g');
-            workingText = workingText.replace(pattern, function(match) {
-                const placeholder = `__WHITELIST_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            });
-        });
-
-        // 12. Protect K numbers that are not multiples of 100
-        workingText = workingText.replace(/\b(\d+)K\b/gi, function(match, num) {
-            const numVal = parseInt(num);
-            if (numVal % 100 !== 0) {
-                const placeholder = `__K_NUMBER_${protectedIndex}__`;
-                protectedRanges.push({ placeholder, original: match });
-                protectedIndex++;
-                return placeholder;
-            }
-            return match; // Keep for potential conversion
-        });
-
-        // 13. Protect model numbers (single letter + number)
-        workingText = workingText.replace(/\b[A-Z]\d+\b/g, function(match) {
-            const placeholder = `__MODEL_${protectedIndex}__`;
-            protectedRanges.push({ placeholder, original: match });
-            protectedIndex++;
-            return placeholder;
-        });
-
-        // Now find all remaining numbers that would be converted
-        console.log('Working text after all protections:');
-        console.log(workingText);
-        console.log('Protected ranges:', protectedRanges.map(r => r.original));
-
-        const convertibleNumbers = [];
-
-        // Handle plural numbers ending in 's' (these would be converted)
-        workingText.replace(/\b(\d+)s\b/g, function(match, numStr, position) {
-            console.log('Found plural number in working text:', match, 'at position', position);
-            const originalPosition = findOriginalPosition(text, match, position, protectedRanges);
-            if (originalPosition !== -1) {
-                // Double-check this number isn't inside protected content
-                if (!isInsideProtectedContent(text, originalPosition, match, protectedRanges)) {
-                    const converted = convertPluralNumber(numStr);
-                    const uid = createNumberUID(text, originalPosition, match);
-
-                    // Skip if user already declined this number
-                    if (declinedNumbers.has(uid)) {
-                        console.log('Skipping previously declined plural number:', match);
-                        return match;
-                    }
-
-                    console.log('Adding plural conversion:', match, '→', converted, 'at position', originalPosition);
-                    convertibleNumbers.push({
-                        original: match,
-                        converted: converted,
-                        position: originalPosition,
-                        uid: uid
-                    });
-                } else {
-                    console.log('Skipping plural number inside protected content:', match);
-                }
-            }
-            return match;
-        });
-
-        // Find remaining standalone numbers (these would be converted)
-        workingText.replace(/\b\d+\b/g, function(match, position) {
-            console.log('Found standalone number in working text:', match, 'at position', position);
-            const num = parseInt(match);
-            const originalPosition = findOriginalPosition(text, match, position, protectedRanges);
-            if (originalPosition !== -1) {
-                // Double-check this number isn't inside protected content
-                if (!isInsideProtectedContent(text, originalPosition, match, protectedRanges)) {
-                    const converted = convertStandaloneNumber(num);
-                    const uid = createNumberUID(text, originalPosition, match);
-
-                    // Skip if user already declined this number
-                    if (declinedNumbers.has(uid)) {
-                        console.log('Skipping previously declined standalone number:', match);
-                        return match;
-                    }
-
-                    console.log('Adding standalone conversion:', match, '→', converted, 'at position', originalPosition);
-                    convertibleNumbers.push({
-                        original: match,
-                        converted: converted,
-                        position: originalPosition,
-                        uid: uid
-                    });
-                } else {
-                    console.log('Skipping standalone number inside protected content:', match);
-                }
-            }
-            return match;
-        });
-
-        // Sort by position to maintain order
-        convertibleNumbers.sort((a, b) => a.position - b.position);
-
-        console.log('Found convertible numbers:', convertibleNumbers.map(c => c.original));
-        return convertibleNumbers;
-    }
-
-    function findOriginalPosition(originalText, numberText, workingPosition, protectedRanges) {
-        // Since we have the number text, we can find all occurrences in original text
-        // and match them with word boundaries
-
-        const regex = new RegExp('\\b' + numberText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
-        const matches = [];
-        let match;
-
-        while ((match = regex.exec(originalText)) !== null) {
-            // Extra check: make sure this match is not part of a longer number (like finding "2" in "2014")
-            // Check if there's a digit immediately before or after
-            const beforeChar = match.index > 0 ? originalText[match.index - 1] : '';
-            const afterChar = match.index + numberText.length < originalText.length ? originalText[match.index + numberText.length] : '';
-            
-            // Skip if it's part of a longer number (would have been protected)
-            if (/\d/.test(beforeChar) || /\d/.test(afterChar)) {
-                continue;
-            }
-            
-            matches.push(match.index);
-        }
-
-        if (matches.length === 0) {
-            return -1; // Number not found in original text
-        }
-
-        if (matches.length === 1) {
-            return matches[0]; // Only one match, return it
-        }
-
-        // Multiple matches - need to determine which one corresponds to our working position
-        // Calculate approximate original position by accounting for protected ranges
-        let estimatedPosition = workingPosition;
-
-        // Sort protected ranges by their original position in text
-        const sortedRanges = [...protectedRanges].sort((a, b) => {
-            const aPos = originalText.indexOf(a.original);
-            const bPos = originalText.indexOf(b.original);
-            return aPos - bPos;
-        });
-
-        // Adjust position based on length differences from protections
-        for (const { placeholder, original } of sortedRanges) {
-            const originalPos = originalText.indexOf(original);
-            if (originalPos !== -1 && originalPos < estimatedPosition) {
-                const lengthDiff = original.length - placeholder.length;
-                estimatedPosition += lengthDiff;
-            }
-        }
-
-        // Find the closest match to our estimated position
-        let closestMatch = matches[0];
-        let closestDistance = Math.abs(matches[0] - estimatedPosition);
-
-        for (let i = 1; i < matches.length; i++) {
-            const distance = Math.abs(matches[i] - estimatedPosition);
-            if (distance < closestDistance) {
-                closestDistance = distance;
-                closestMatch = matches[i];
-            }
-        }
-
-        return closestMatch;
-    }
-
-    function isInsideProtectedContent(originalText, position, numberText, protectedRanges) {
-        // Check if the number at this position is inside any of the original protected ranges
-
-        for (const { original } of protectedRanges) {
-            // Find all occurrences of this protected content in the original text
-            let searchStart = 0;
-            let protectedStart;
-
-            while ((protectedStart = originalText.indexOf(original, searchStart)) !== -1) {
-                const protectedEnd = protectedStart + original.length;
-
-                // Check if our number position falls within this protected range
-                if (position >= protectedStart && position + numberText.length <= protectedEnd) {
-                    console.log('Number', numberText, 'at position', position, 'is inside protected content:', original);
-                    return true;
-                }
-
-                searchStart = protectedStart + 1;
-            }
-        }
-
-        return false;
-    }
-
-    function convertPluralNumber(numStr) {
-        const num = parseInt(numStr);
-        const ones = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-                     'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
-                     'seventeen', 'eighteen', 'nineteen'];
-        const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-
-        if (num % 100 === 0 && num >= 100) {
-            const hundreds = num / 100;
-            if (hundreds <= 19) {
-                return ones[hundreds] + ' hundreds';
-            } else {
-                const tensDigit = Math.floor(hundreds / 10);
-                const onesDigit = hundreds % 10;
-                let result = tens[tensDigit];
-                if (onesDigit > 0) result += '-' + ones[onesDigit];
-                return result + ' hundreds';
-            }
-        } else if (num >= 20 && num < 100 && num % 10 === 0) {
-            const tensDigit = Math.floor(num / 10);
-            return tens[tensDigit].slice(0, -1) + 'ies';
-        } else {
-            const wordForm = convertStandaloneNumber(num);
-            if (wordForm.endsWith('x')) {
-                return wordForm + 'es';
-            }
-            return wordForm + 's';
-        }
-    }
-
-    function convertStandaloneNumber(num) {
-        if (num === 0) return 'zero';
-
-        const ones = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine',
-                     'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen',
-                     'seventeen', 'eighteen', 'nineteen'];
-        const tens = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-
-        let result = '';
-
-        // Handle thousands
-        if (num >= 1000) {
-            const thousands = Math.floor(num / 1000);
-            if (thousands <= 19) {
-                result += ones[thousands] + ' thousand';
-            } else {
-                const thousandsTens = Math.floor(thousands / 10);
-                const thousandsOnes = thousands % 10;
-                result += tens[thousandsTens];
-                if (thousandsOnes > 0) result += '-' + ones[thousandsOnes];
-                result += ' thousand';
-            }
-            num %= 1000;
-            if (num > 0) result += ' ';
-        }
-
-        // Handle hundreds
-        if (num >= 100) {
-            const hundreds = Math.floor(num / 100);
-            result += ones[hundreds] + ' hundred';
-            num %= 100;
-            if (num > 0) result += ' ';
-        }
-
-        // Handle tens and ones
-        if (num >= 20) {
-            const tensDigit = Math.floor(num / 10);
-            const onesDigit = num % 10;
-            result += tens[tensDigit];
-            if (onesDigit > 0) result += '-' + ones[onesDigit];
-        } else if (num > 0) {
-            result += ones[num];
-        }
-
-        return result.trim();
-    }
-
-
-
 
     function scrollToPosition(textEditor, position) {
         // Focus the editor first
@@ -8402,6 +9344,840 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         return textNodes;
     }
+    function isLyricsEditorTextarea(element) {
+        return !!(element && element.tagName === 'TEXTAREA' && element.closest && element.closest('[class*="LyricsEdit"], .LyricsEdit-desktop__Editor'));
+    }
+
+    function escapeHtmlForCustomEditor(str) {
+        if (typeof str !== 'string') {
+            return '';
+        }
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    function computeCustomHighlightRanges(textEditor, text) {
+        if (!textEditor || !textEditor._highlightState || !Array.isArray(textEditor._highlightState.matches)) {
+            return [];
+        }
+
+        const { matches = [], currentMatchIndex = 0, mode = 'sequential' } = textEditor._highlightState;
+        const ranges = [];
+        let cursor = 0;
+
+        matches.forEach((highlightMatch, idx) => {
+            if (!highlightMatch || !highlightMatch.original) {
+                return;
+            }
+
+            const source = text || '';
+            let foundIndex = source.indexOf(highlightMatch.original, cursor);
+            if (foundIndex === -1) {
+                foundIndex = source.indexOf(highlightMatch.original);
+            }
+
+            if (foundIndex !== -1) {
+                ranges.push({
+                    start: foundIndex,
+                    end: foundIndex + highlightMatch.original.length,
+                    idx,
+                    style: mode === 'grouped'
+                        ? (idx === currentMatchIndex
+                            ? "background: #ff5252; color: #fff; padding: 1px 2px; border-radius: 2px;"
+                            : "background: rgba(255, 82, 82, 0.85); color: #fff; padding: 1px 2px; border-radius: 2px;")
+                        : (idx === currentMatchIndex
+                            ? "background: #ff5252; color: #fff; padding: 1px 2px; border-radius: 2px;"
+                            : "background: rgba(255, 235, 59, 0.5); color: #333; padding: 1px 2px; border-radius: 2px;")
+                });
+                cursor = foundIndex + 1;
+            }
+        });
+
+        return ranges;
+    }
+
+    function renderCustomEditorSegment(segmentText, segmentStart, segmentEnd, baseStyle, highlightRanges) {
+        if (!segmentText) {
+            return '';
+        }
+
+        const boundaries = new Set([segmentStart, segmentEnd]);
+        highlightRanges.forEach(range => {
+            const overlapStart = Math.max(range.start, segmentStart);
+            const overlapEnd = Math.min(range.end, segmentEnd);
+            if (overlapEnd > overlapStart) {
+                boundaries.add(overlapStart);
+                boundaries.add(overlapEnd);
+            }
+        });
+
+        const sortedBoundaries = Array.from(boundaries).sort((a, b) => a - b);
+        let html = '';
+
+        for (let i = 0; i < sortedBoundaries.length - 1; i++) {
+            const partStart = sortedBoundaries[i];
+            const partEnd = sortedBoundaries[i + 1];
+            if (partEnd <= partStart) continue;
+
+            const slice = segmentText.slice(partStart - segmentStart, partEnd - segmentStart);
+            let style = baseStyle || '';
+            let attrs = '';
+
+            const highlight = highlightRanges.find(range => partStart >= range.start && partEnd <= range.end);
+            if (highlight) {
+                style = style ? `${style}; ${highlight.style}` : highlight.style;
+                attrs = ` data-interactive-highlight="true" data-match-index="${highlight.idx}"`;
+            }
+
+            const styleAttr = style ? ` style="${style}"` : '';
+            html += `<span${attrs}${styleAttr}>${escapeHtmlForCustomEditor(slice)}</span>`;
+        }
+
+        return html;
+    }
+
+    function buildCustomEditorHTML(textEditor, text) {
+        const sourceText = typeof text === 'string' ? text : '';
+        const highlightRanges = computeCustomHighlightRanges(textEditor, sourceText);
+        const tokenRegex = /(<\/?b>|<\/?i>|\[[^\]]+\]\(\d+\))/gi;
+        let match;
+        let lastIndex = 0;
+        let htmlParts = [];
+        let boldActive = false;
+        let italicActive = false;
+
+        const pushPlainText = (segment, startIndex, endIndex) => {
+            if (!segment) return;
+            const styles = [];
+            if (boldActive) styles.push('font-weight: 600');
+            if (italicActive) styles.push('font-style: italic');
+            htmlParts.push(renderCustomEditorSegment(segment, startIndex, endIndex, styles.join('; '), highlightRanges));
+        };
+
+        while ((match = tokenRegex.exec(sourceText)) !== null) {
+            if (match.index > lastIndex) {
+                const plainSegment = sourceText.slice(lastIndex, match.index);
+                pushPlainText(plainSegment, lastIndex, match.index);
+            }
+
+            const token = match[0];
+            const tokenStart = match.index;
+            const tokenEnd = tokenStart + token.length;
+            const grayStyleBase = 'color: #a0a6ad; font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace; opacity: 0.85;';
+
+            // If this is an annotation like [text](123), render only the brackets/parentheses/numbers in gray,
+            // and keep the inner [text] in normal styling (with current bold/italic if active)
+            if (token.startsWith('[')) {
+                const annMatch = /^\[([^\]]+)\]\((\d+)\)$/i.exec(token);
+                if (annMatch) {
+                    const innerText = annMatch[1] || '';
+                    const numberText = annMatch[2] || '';
+
+                    // Compute absolute positions for each part
+                    const posBracketOpenStart = tokenStart;
+                    const posBracketOpenEnd = tokenStart + 1; // '['
+
+                    const posInnerStart = posBracketOpenEnd;
+                    const posInnerEnd = posInnerStart + innerText.length; // inner text
+
+                    const posBracketParenStart = posInnerEnd; // "]("
+                    const posBracketParenEnd = posBracketParenStart + 2;
+
+                    const posNumberStart = posBracketParenEnd; // digits
+                    const posNumberEnd = posNumberStart + numberText.length;
+
+                    const posParenCloseStart = posNumberEnd; // ')'
+                    const posParenCloseEnd = posParenCloseStart + 1;
+
+                    // '['
+                    htmlParts.push(renderCustomEditorSegment('[', posBracketOpenStart, posBracketOpenEnd, `${grayStyleBase} font-weight: 500;`, highlightRanges));
+                    // inner text (normal styling respecting bold/italic)
+                    pushPlainText(innerText, posInnerStart, posInnerEnd);
+                    // ']('
+                    htmlParts.push(renderCustomEditorSegment('](', posBracketParenStart, posBracketParenEnd, `${grayStyleBase} font-weight: 500;`, highlightRanges));
+                    // number
+                    htmlParts.push(renderCustomEditorSegment(numberText, posNumberStart, posNumberEnd, `${grayStyleBase} font-weight: 500;`, highlightRanges));
+                    // ')'
+                    htmlParts.push(renderCustomEditorSegment(')', posParenCloseStart, posParenCloseEnd, `${grayStyleBase} font-weight: 500;`, highlightRanges));
+                } else {
+                    // Fallback (shouldn't happen with our regex) - style as before
+                    htmlParts.push(renderCustomEditorSegment(token, tokenStart, tokenEnd, `${grayStyleBase} font-weight: 500;`, highlightRanges));
+                }
+            } else {
+                // Bold/italic tags themselves should appear muted as markers (gray monospace) while toggling states
+                let tokenStyle = grayStyleBase;
+                htmlParts.push(renderCustomEditorSegment(token, tokenStart, tokenEnd, tokenStyle, highlightRanges));
+            }
+
+            if (/^<b>$/i.test(token)) {
+                boldActive = true;
+            } else if (/^<\/b>$/i.test(token)) {
+                boldActive = false;
+            } else if (/^<i>$/i.test(token)) {
+                italicActive = true;
+            } else if (/^<\/i>$/i.test(token)) {
+                italicActive = false;
+            }
+
+            lastIndex = tokenRegex.lastIndex;
+        }
+
+        if (lastIndex < sourceText.length) {
+            const remaining = sourceText.slice(lastIndex);
+            pushPlainText(remaining, lastIndex, sourceText.length);
+        }
+
+        if (htmlParts.length === 0) {
+            return '<span style="opacity: 0.4;">&#8203;</span>';
+        }
+
+        return htmlParts.join('');
+    }
+
+    function updateCustomEditorOverlay(textEditor) {
+        if (!textEditor || !textEditor._replacementDiv) {
+            return;
+        }
+
+        const replacementDiv = textEditor._replacementDiv;
+        const content = textEditor.value || '';
+        const html = buildCustomEditorHTML(textEditor, content);
+
+        // Save cursor position before updating
+        const selection = window.getSelection();
+        let cursorOffset = 0;
+        if (selection.rangeCount > 0 && replacementDiv.contains(selection.anchorNode)) {
+            const range = selection.getRangeAt(0);
+            const preCaretRange = range.cloneRange();
+            preCaretRange.selectNodeContents(replacementDiv);
+            preCaretRange.setEnd(range.endContainer, range.endOffset);
+            cursorOffset = preCaretRange.toString().length;
+        }
+
+        // Set flag to prevent MutationObserver from interfering
+        replacementDiv._isUpdating = true;
+
+        // Update HTML content (all HTML is escaped by buildCustomEditorHTML)
+        replacementDiv.innerHTML = html;
+
+        // Clear flag after a short delay to allow DOM updates to complete
+        setTimeout(() => {
+            replacementDiv._isUpdating = false;
+        }, 0);
+
+        // Restore cursor position
+        if (cursorOffset > 0) {
+            try {
+                const textNodes = [];
+                const getTextNodes = (node) => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        textNodes.push(node);
+                    } else {
+                        for (let child of node.childNodes) {
+                            getTextNodes(child);
+                        }
+                    }
+                };
+                getTextNodes(replacementDiv);
+
+                let currentOffset = 0;
+                for (let textNode of textNodes) {
+                    const textLength = textNode.textContent.length;
+                    if (currentOffset + textLength >= cursorOffset) {
+                        const range = document.createRange();
+                        const localOffset = cursorOffset - currentOffset;
+                        range.setStart(textNode, Math.min(localOffset, textLength));
+                        range.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        break;
+                    }
+                    currentOffset += textLength;
+                }
+            } catch (e) {
+                console.log('Could not restore cursor:', e);
+            }
+        }
+    }
+
+    function replaceTextareaWithCustomEditor(textEditor) {
+        if (!textEditor || textEditor._customEditorActive) {
+            return null;
+        }
+
+        console.log('🔧 Replacing textarea with contenteditable div (debounced render mode)...');
+
+        // Store reference to original textarea
+        const originalTextarea = textEditor;
+        const parent = originalTextarea.parentElement;
+        if (!parent) {
+            return null;
+        }
+
+        // CRITICAL: Clean up any orphaned custom editor divs in this parent
+        // This can happen when React recreates the textarea (e.g., after cancel/save)
+        const orphanedEditors = parent.querySelectorAll('.scribetools-custom-editor-active');
+        orphanedEditors.forEach(orphan => {
+            console.log('🧹 Removing orphaned custom editor div');
+            orphan.remove();
+        });
+
+        // Also clean up any hidden textareas that might be left over (not the current one)
+        const allTextareas = parent.querySelectorAll('textarea');
+        allTextareas.forEach(ta => {
+            if (ta !== originalTextarea && ta.style.position === 'absolute' && ta.style.left === '-9999px') {
+                console.log('🧹 Removing orphaned hidden textarea');
+                ta.remove();
+            }
+        });
+
+        // Mark as active to prevent double-processing
+        originalTextarea._customEditorActive = true;
+
+        // Get computed styles from the textarea
+        const styles = window.getComputedStyle(originalTextarea);
+
+        // Create a contenteditable div that replaces the textarea
+        const replacementDiv = document.createElement('div');
+        replacementDiv.contentEditable = 'true';
+        replacementDiv.spellcheck = false;
+
+        // Additional attributes
+        replacementDiv.setAttribute('data-text-only', 'true');
+
+        // Copy all classes from textarea
+        replacementDiv.className = originalTextarea.className + ' scribetools-custom-editor-active';
+
+        // Copy important attributes
+        if (originalTextarea.id) replacementDiv.setAttribute('data-original-id', originalTextarea.id);
+
+        // Copy all inline styles
+        Array.from(originalTextarea.style).forEach(prop => {
+            replacementDiv.style[prop] = originalTextarea.style[prop];
+        });
+
+        // Copy critical computed styles to maintain layout
+        const criticalStyles = [
+            'display', 'width', 'height', 'minHeight', 'maxHeight',
+            'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+            'margin', 'marginTop', 'marginRight', 'marginBottom', 'marginLeft',
+            'border', 'borderTop', 'borderRight', 'borderBottom', 'borderLeft',
+            'borderRadius', 'boxSizing',
+            'fontSize', 'fontFamily', 'fontWeight', 'lineHeight',
+            'color', 'backgroundColor',
+            'gridColumn', 'gridRow', 'gridColumnStart', 'gridColumnEnd',
+            'flex', 'flexGrow', 'flexShrink', 'flexBasis',
+            'alignSelf', 'justifySelf', 'placeSelf'
+        ];
+
+        criticalStyles.forEach(prop => {
+            if (!replacementDiv.style[prop]) {
+                replacementDiv.style[prop] = styles[prop];
+            }
+        });
+
+        // Force grid column to prevent layout issues
+        if (styles.gridColumn && styles.gridColumn !== 'auto') {
+            replacementDiv.style.gridColumn = styles.gridColumn;
+        }
+        if (styles.gridColumnStart && styles.gridColumnStart !== 'auto') {
+            replacementDiv.style.gridColumnStart = styles.gridColumnStart;
+        }
+        if (styles.gridColumnEnd && styles.gridColumnEnd !== 'auto') {
+            replacementDiv.style.gridColumnEnd = styles.gridColumnEnd;
+        }
+
+        // Apply text-specific styles
+        replacementDiv.style.whiteSpace = 'pre-wrap';
+        replacementDiv.style.overflowWrap = 'break-word';
+        replacementDiv.style.resize = originalTextarea.style.resize || styles.resize;
+
+        // Set proper z-index
+        replacementDiv.style.zIndex = '2';
+
+        // Ensure it's positioned correctly
+        if (!replacementDiv.style.position || replacementDiv.style.position === 'static') {
+            replacementDiv.style.position = styles.position;
+        }
+
+        // Get initial textarea value
+        const originalValueDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+        const initialValue = originalValueDescriptor ? originalValueDescriptor.get.call(originalTextarea) : originalTextarea.value;
+
+        // Make it behave like textarea with value property
+        Object.defineProperty(replacementDiv, 'value', {
+            get: function () {
+                return this.innerText || this.textContent || '';
+            },
+            set: function (val) {
+                const currentValue = this.innerText || this.textContent || '';
+                if (currentValue !== val) {
+                    this._isSettingValue = true;
+                    this.textContent = val;
+                    this._isSettingValue = false;
+                }
+            }
+        });
+
+        // Initialize _originalValue with the textarea's current content
+        originalTextarea._originalValue = initialValue;
+
+        // Helper function to get cursor position by character count
+        const getCursorOffset = () => {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return 0;
+
+            const range = selection.getRangeAt(0);
+            const preCaretRange = range.cloneRange();
+            preCaretRange.selectNodeContents(replacementDiv);
+            preCaretRange.setEnd(range.endContainer, range.endOffset);
+            return preCaretRange.toString().length;
+        };
+
+        // Helper to restore cursor position by character count
+        const setCursorOffset = (offset) => {
+            try {
+                const range = document.createRange();
+                const textNodes = [];
+
+                // Collect all text nodes
+                const walkTextNodes = (node) => {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        textNodes.push(node);
+                    } else {
+                        for (let child of node.childNodes) {
+                            walkTextNodes(child);
+                        }
+                    }
+                };
+                walkTextNodes(replacementDiv);
+
+                // Find the text node and offset
+                let currentOffset = 0;
+                for (let textNode of textNodes) {
+                    const textLength = textNode.textContent.length;
+                    if (currentOffset + textLength >= offset) {
+                        const nodeOffset = offset - currentOffset;
+                        range.setStart(textNode, Math.min(nodeOffset, textLength));
+                        range.collapse(true);
+
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                        return;
+                    }
+                    currentOffset += textLength;
+                }
+
+                // Fallback: place at end
+                range.selectNodeContents(replacementDiv);
+                range.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            } catch (err) {
+                console.warn('Failed to restore cursor:', err);
+            }
+        };
+
+        // Override selectionStart/End properties
+        Object.defineProperty(originalTextarea, 'selectionStart', {
+            get: function () {
+                return this._replacementDiv ? getCursorOffset() : 0;
+            },
+            set: function (val) { },
+            configurable: true
+        });
+
+        Object.defineProperty(originalTextarea, 'selectionEnd', {
+            get: function () {
+                return this._replacementDiv ? getCursorOffset() : 0;
+            },
+            set: function (val) { },
+            configurable: true
+        });
+
+        // Override the value property on the original textarea
+        Object.defineProperty(originalTextarea, 'value', {
+            get: function () {
+                if (this._replacementDiv) {
+                    const currentText = this._replacementDiv.innerText || this._replacementDiv.textContent || '';
+                    this._originalValue = currentText;
+                    return currentText;
+                }
+
+                if (this._originalValue !== undefined) {
+                    return this._originalValue;
+                }
+
+                return originalValueDescriptor.get.call(this);
+            },
+            set: function (val) {
+                this._originalValue = val;
+                originalValueDescriptor.set.call(this, val);
+                if (this._replacementDiv) {
+                    this._replacementDiv.value = val;
+                }
+            },
+            configurable: true
+        });
+
+        // Hide original textarea
+        originalTextarea._savedInlineStyle = {
+            position: originalTextarea.style.position,
+            left: originalTextarea.style.left,
+            top: originalTextarea.style.top,
+            width: originalTextarea.style.width,
+            height: originalTextarea.style.height,
+            zIndex: originalTextarea.style.zIndex,
+            opacity: originalTextarea.style.opacity,
+            pointerEvents: originalTextarea.style.pointerEvents,
+            visibility: originalTextarea.style.visibility
+        };
+
+        originalTextarea.style.position = 'absolute';
+        originalTextarea.style.left = '-9999px';
+        originalTextarea.style.top = '0';
+        originalTextarea.style.width = '1px';
+        originalTextarea.style.height = '1px';
+        originalTextarea.style.zIndex = '-1';
+        originalTextarea.style.opacity = '0';
+        originalTextarea.style.pointerEvents = 'none';
+        originalTextarea.style.visibility = 'hidden';
+
+        // Insert the replacement div
+        parent.insertBefore(replacementDiv, originalTextarea);
+
+        // Store references
+        originalTextarea._replacementDiv = replacementDiv;
+        replacementDiv._originalTextarea = originalTextarea;
+
+        // === DEBOUNCED RENDER LOGIC ===
+
+        let renderDebounceTimer = null;
+        let isRendering = false;
+        const RENDER_DEBOUNCE_MS = 1000; // 1 second delay
+
+        // Apply syntax highlighting function
+        const applyHighlighting = () => {
+            if (isRendering) return;
+
+            console.log('[RENDER] Applying syntax highlighting...');
+            isRendering = true;
+
+            // Save cursor position
+            const cursorOffset = getCursorOffset();
+
+            // Get plain text
+            const plainText = replacementDiv.innerText || replacementDiv.textContent || '';
+
+            // Update underlying textarea
+            originalTextarea.value = plainText;
+
+            // Build highlighted HTML
+            const html = buildCustomEditorHTML(originalTextarea, plainText);
+
+            // Update div's HTML
+            replacementDiv.innerHTML = html;
+
+            // Restore cursor
+            setCursorOffset(cursorOffset);
+
+            isRendering = false;
+            console.log('[RENDER] Highlighting applied, cursor restored');
+        };
+
+        // Input handler - just update textarea, debounce highlighting
+        const inputHandler = (e) => {
+            if (replacementDiv._isSettingValue || isRendering) return;
+
+            // Get plain text
+            const plainText = replacementDiv.innerText || replacementDiv.textContent || '';
+
+            // Immediately update textarea (for React sync)
+            originalTextarea.value = plainText;
+
+            // Dispatch events
+            originalTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+            originalTextarea.dispatchEvent(new Event('change', { bubbles: true }));
+
+            // Debounce highlighting
+            if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
+            renderDebounceTimer = setTimeout(applyHighlighting, RENDER_DEBOUNCE_MS);
+        };
+        replacementDiv.addEventListener('input', inputHandler);
+
+        // Blur handler - apply highlighting immediately when focus is lost
+        const blurHandler = () => {
+            console.log('[BLUR] Focus lost, applying highlights immediately...');
+            if (renderDebounceTimer) {
+                clearTimeout(renderDebounceTimer);
+                renderDebounceTimer = null;
+            }
+            applyHighlighting();
+        };
+        replacementDiv.addEventListener('blur', blurHandler);
+
+        // Handle beforeinput to prevent HTML insertion
+        const beforeInputHandler = (e) => {
+            // Allow only plain text insertions
+            if (e.inputType && e.inputType.includes('format')) {
+                console.warn('⚠️ Blocking format input:', e.inputType);
+                e.preventDefault();
+                return false;
+            }
+
+            // If inserting HTML, convert to plain text
+            if (e.dataTransfer || (e.data && /<[^>]+>/.test(e.data))) {
+                console.warn('⚠️ Blocking HTML insertion via beforeinput');
+                e.preventDefault();
+
+                // Insert as plain text instead
+                const text = e.data || '';
+                if (text) {
+                    document.execCommand('insertText', false, text);
+                }
+                return false;
+            }
+        };
+        replacementDiv.addEventListener('beforeinput', beforeInputHandler);
+
+        // Handle paste events to prevent HTML injection
+        const pasteHandler = (e) => {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+
+            // Insert plain text at cursor position
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return;
+
+            const range = selection.getRangeAt(0);
+            range.deleteContents();
+
+            // Create a temporary text node with the plain text
+            const textNode = document.createTextNode(text);
+            range.insertNode(textNode);
+
+            // Move cursor to end of inserted text
+            range.setStartAfter(textNode);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            // Trigger input event to update
+            replacementDiv.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+        replacementDiv.addEventListener('paste', pasteHandler);
+
+        // Add a mutation observer to catch any direct HTML manipulations
+        const observer = new MutationObserver((mutations) => {
+            if (!replacementDiv._isSettingValue && !isRendering) {
+                // Check if any non-span HTML elements were added
+                const hasUnwantedHtml = replacementDiv.querySelector('*:not(span)');
+                if (hasUnwantedHtml) {
+                    console.warn('⚠️ MutationObserver detected unwanted HTML, cleaning...');
+                    // Strip all HTML and keep plain text only
+                    const plainText = replacementDiv.innerText || replacementDiv.textContent || '';
+                    replacementDiv._isSettingValue = true;
+                    replacementDiv.textContent = plainText;
+                    originalTextarea.value = plainText;
+                    replacementDiv._isSettingValue = false;
+                }
+            }
+        });
+        observer.observe(replacementDiv, {
+            childList: true,
+            characterData: true,
+            subtree: true
+        });
+
+        // Store references for cleanup
+        replacementDiv._observer = observer;
+        replacementDiv._pasteHandler = pasteHandler;
+        replacementDiv._inputHandler = inputHandler;
+        replacementDiv._beforeInputHandler = beforeInputHandler;
+        replacementDiv._blurHandler = blurHandler;
+        replacementDiv._renderDebounceTimer = renderDebounceTimer;
+
+        // Initial render with plain text
+        replacementDiv.textContent = initialValue;
+
+        // If original textarea was focused, focus the replacement
+        if (document.activeElement === originalTextarea) {
+            replacementDiv.focus();
+        }
+
+        console.log('✅ Textarea replaced with custom contenteditable div (debounced render mode)');
+
+        return replacementDiv;
+    }
+
+    function ensureCustomEditorOverlay(textEditor) {
+        if (!textEditor) return;
+
+        // If custom editor is already active, update it
+        if (textEditor._customEditorActive && textEditor._replacementDiv) {
+            updateCustomEditorOverlay(textEditor);
+            return;
+        }
+
+        // Otherwise, create a new custom editor
+        replaceTextareaWithCustomEditor(textEditor);
+    }
+
+    function disableCustomEditor(textEditor) {
+        if (!textEditor || !textEditor._customEditorActive) {
+            return;
+        }
+
+        const replacementDiv = textEditor._replacementDiv;
+        if (replacementDiv && replacementDiv.parentElement) {
+            // Disconnect observer
+            if (replacementDiv._observer) {
+                replacementDiv._observer.disconnect();
+                delete replacementDiv._observer;
+            }
+
+            // Remove event listeners
+            if (replacementDiv._inputHandler) {
+                replacementDiv.removeEventListener('input', replacementDiv._inputHandler);
+                delete replacementDiv._inputHandler;
+            }
+            if (replacementDiv._beforeInputHandler) {
+                replacementDiv.removeEventListener('beforeinput', replacementDiv._beforeInputHandler);
+                delete replacementDiv._beforeInputHandler;
+            }
+            if (replacementDiv._pasteHandler) {
+                replacementDiv.removeEventListener('paste', replacementDiv._pasteHandler);
+                delete replacementDiv._pasteHandler;
+            }
+            if (replacementDiv._blurHandler) {
+                replacementDiv.removeEventListener('blur', replacementDiv._blurHandler);
+                delete replacementDiv._blurHandler;
+            }
+            if (replacementDiv._keydownHandler) {
+                replacementDiv.removeEventListener('keydown', replacementDiv._keydownHandler, true);
+                delete replacementDiv._keydownHandler;
+            }
+
+            // Clear render debounce timer
+            if (replacementDiv._renderDebounceTimer) {
+                clearTimeout(replacementDiv._renderDebounceTimer);
+                delete replacementDiv._renderDebounceTimer;
+            }
+
+            // Clear history timer and stacks
+            if (replacementDiv._historyTimer) {
+                clearTimeout(replacementDiv._historyTimer);
+                delete replacementDiv._historyTimer;
+            }
+            if (replacementDiv._undoStack) {
+                delete replacementDiv._undoStack;
+            }
+            if (replacementDiv._redoStack) {
+                delete replacementDiv._redoStack;
+            }
+
+            // Restore original properties on textarea
+            const originalValueDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+            if (originalValueDescriptor) {
+                Object.defineProperty(textEditor, 'value', originalValueDescriptor);
+            }
+
+            const originalSelectionStartDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'selectionStart');
+            if (originalSelectionStartDescriptor) {
+                Object.defineProperty(textEditor, 'selectionStart', originalSelectionStartDescriptor);
+            }
+
+            const originalSelectionEndDescriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'selectionEnd');
+            if (originalSelectionEndDescriptor) {
+                Object.defineProperty(textEditor, 'selectionEnd', originalSelectionEndDescriptor);
+            }
+
+            // Sync final content from replacement div to textarea
+            const finalValue = replacementDiv.innerText || replacementDiv.textContent || '';
+            if (originalValueDescriptor && typeof originalValueDescriptor.set === 'function') {
+                originalValueDescriptor.set.call(textEditor, finalValue);
+            } else {
+                textEditor.value = finalValue;
+            }
+
+            // Remove the replacement DIV
+            replacementDiv.remove();
+
+            // Clean up references
+            delete textEditor._replacementDiv;
+            delete textEditor._originalValue;
+            delete replacementDiv._originalTextarea;
+        }
+
+        // Restore original textarea inline styles
+        if (textEditor._savedInlineStyle) {
+            const s = textEditor._savedInlineStyle;
+            textEditor.style.position = s.position || '';
+            textEditor.style.opacity = s.opacity || '';
+            textEditor.style.pointerEvents = s.pointerEvents || '';
+            textEditor.style.width = s.width || '';
+            textEditor.style.height = s.height || '';
+            textEditor.style.margin = s.margin || '';
+            textEditor.style.padding = s.padding || '';
+            textEditor.style.visibility = s.visibility || '';
+            textEditor.style.display = s.display || '';
+            delete textEditor._savedInlineStyle;
+        }
+
+        textEditor.classList.remove('scribetools-custom-editor-active');
+        delete textEditor._customEditorActive;
+
+        console.log('✅ Custom editor disabled, textarea restored');
+    }
+
+    function applyCustomEditorSetting() {
+        const lyricEditors = Array.from(document.querySelectorAll('textarea'))
+            .filter(el => isLyricsEditorTextarea(el));
+
+        lyricEditors.forEach(textEditor => {
+            if (autoFixSettings.useCustomEditor) {
+                ensureCustomEditorOverlay(textEditor);
+            } else {
+                disableCustomEditor(textEditor);
+            }
+        });
+    }
+
+    // Set up a global observer to clean up custom editors when React removes textareas
+    if (typeof MutationObserver !== 'undefined' && !window._customEditorCleanupObserver) {
+        window._customEditorCleanupObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.removedNodes.forEach((node) => {
+                    // Check if a textarea with custom editor was removed
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        if (node.tagName === 'TEXTAREA' && node._customEditorActive && node._replacementDiv) {
+                            console.log('🧹 Textarea removed by React, cleaning up custom editor');
+                            if (node._replacementDiv.parentElement) {
+                                node._replacementDiv.remove();
+                            }
+                        }
+                        // Also check if container was removed
+                        const textareas = node.querySelectorAll ? node.querySelectorAll('textarea') : [];
+                        textareas.forEach(ta => {
+                            if (ta._customEditorActive && ta._replacementDiv && ta._replacementDiv.parentElement) {
+                                console.log('🧹 Container with custom editor removed, cleaning up');
+                                ta._replacementDiv.remove();
+                            }
+                        });
+                    }
+                });
+            });
+        });
+        window._customEditorCleanupObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    }
+
     function highlightInteractiveMatch(textEditor, match, allMatches = null) {
         // Support both single match and multiple matches
         const matches = allMatches || [match];
@@ -8413,11 +10189,23 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         }
 
         const isGroupedMode = autoFixSettings.groupFixesByRule &&
-                              sortedMatches.length > 1 &&
-                              sortedMatches.every(m => (m.rule?.id || m.rule?.description) === (match.rule?.id || match.rule?.description));
+            sortedMatches.length > 1 &&
+            sortedMatches.every(m => (m.rule?.id || m.rule?.description) === (match.rule?.id || match.rule?.description));
 
         // Scroll to the conversion position first (scroll to the first/current match)
         scrollToPosition(textEditor, match.position);
+
+        // Always use fresh positions from the passed matches
+        textEditor._highlightState = {
+            matches: sortedMatches.map(m => ({
+                position: m.position,
+                original: m.original,
+                replacement: m.replacement,
+                ruleId: m.rule?.id || m.rule?.description || 'unknown'
+            })),
+            currentMatchIndex,
+            mode: isGroupedMode ? 'grouped' : 'sequential'
+        };
 
         if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
             // For textarea/input we create a temporary overlay to highlight characters
@@ -8426,6 +10214,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             textEditor._originalSelectionEnd = textEditor.selectionEnd;
 
             textEditor.focus();
+
+            if (autoFixSettings.useCustomEditor && ensureCustomEditorOverlay(textEditor)) {
+                textEditor.classList.add('genius-highlighting-active');
+                updateCustomEditorOverlay(textEditor);
+                return;
+            }
 
             // Create highlight overlay
             const parent = textEditor.parentElement;
@@ -8453,6 +10247,29 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             overlay.style.border = styles.border;
             overlay.style.borderRadius = styles.borderRadius;
             overlay.style.margin = styles.margin;
+            overlay.style.zIndex = '7'; // Above the textarea which has z-index: 5
+
+            // Ensure Genius's StickyContributorToolbar stays on top
+            const fixToolbarZIndex = () => {
+                const toolbar = document.querySelector('.StickyContributorToolbar__Container-sc-50ac4923-0, [class*="StickyContributorToolbar"]');
+                if (toolbar && toolbar.style.zIndex === '7') {
+                    toolbar.style.zIndex = '8';
+                }
+            };
+            fixToolbarZIndex();
+
+            // Watch for toolbar recreation and reapply fix
+            if (!window._toolbarZIndexObserver) {
+                window._toolbarZIndexObserver = new MutationObserver(() => {
+                    fixToolbarZIndex();
+                });
+                window._toolbarZIndexObserver.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['style', 'class']
+                });
+            }
 
             const escapeHTML = (str) => str
                 .replace(/&/g, '&amp;')
@@ -8466,8 +10283,16 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 // Find current positions of all matches in the (possibly modified) text
                 const currentMatchPositions = [];
                 sortedMatches.forEach((m, idx) => {
-                    // Search for this match starting from the cursor
-                    const foundIndex = text.indexOf(m.original, cursor);
+                    // First, try to use the stored position if it's valid and at/after cursor
+                    const textAtStoredPos = text.slice(m.position, m.position + m.original.length);
+                    let foundIndex;
+                    if (textAtStoredPos === m.original && m.position >= cursor) {
+                        // Stored position is accurate
+                        foundIndex = m.position;
+                    } else {
+                        // Fall back to searching from cursor
+                        foundIndex = text.indexOf(m.original, cursor);
+                    }
                     if (foundIndex !== -1) {
                         currentMatchPositions.push({
                             idx,
@@ -8530,7 +10355,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 overlay.style.height = textEditor.offsetHeight + 'px';
                 syncOverlay();
             };
-            
+
             // Use ResizeObserver for better resize detection
             let resizeObserver = null;
             if (typeof ResizeObserver !== 'undefined') {
@@ -8539,7 +10364,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 });
                 resizeObserver.observe(textEditor);
             }
-            
+
             // Fallback to window resize event
             window.addEventListener('resize', updateOverlayPosition);
 
@@ -8579,8 +10404,16 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 // Find current positions of all matches in the (possibly modified) text
                 const currentMatchPositions = [];
                 sortedMatches.forEach((m, idx) => {
-                    // Search for this match starting from the cursor
-                    const foundIndex = sourceText.indexOf(m.original, cursor);
+                    // First, try to use the stored position if it's valid and at/after cursor
+                    const textAtStoredPos = sourceText.slice(m.position, m.position + m.original.length);
+                    let foundIndex;
+                    if (textAtStoredPos === m.original && m.position >= cursor) {
+                        // Stored position is accurate
+                        foundIndex = m.position;
+                    } else {
+                        // Fall back to searching from cursor
+                        foundIndex = sourceText.indexOf(m.original, cursor);
+                    }
                     if (foundIndex !== -1) {
                         currentMatchPositions.push({
                             idx,
@@ -8599,7 +10432,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     const { idx, match: m, startPos, endPos } = posInfo;
 
                     if (startPos > cursor) {
-                        htmlParts.push(sourceText.slice(cursor, startPos));
+                        htmlParts.push(escapeHtmlForCustomEditor(sourceText.slice(cursor, startPos)));
                     }
 
                     const segment = sourceText.slice(startPos, endPos);
@@ -8612,12 +10445,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                             ? 'background-color: #ff5252; color: white; padding: 1px 2px; border-radius: 2px;'
                             : 'background-color: rgba(255, 235, 59, 0.5); color: #333; padding: 1px 2px; border-radius: 2px;');
 
-                    htmlParts.push(`<span style="${highlightStyle}" data-interactive-highlight="true" data-match-index="${idx}">${segment}</span>`);
+                    htmlParts.push(`<span style="${highlightStyle}" data-interactive-highlight="true" data-match-index="${idx}">${escapeHtmlForCustomEditor(segment)}</span>`);
                     cursor = endPos;
                 });
 
                 if (cursor < sourceText.length) {
-                    htmlParts.push(sourceText.slice(cursor));
+                    htmlParts.push(escapeHtmlForCustomEditor(sourceText.slice(cursor)));
                 }
 
                 return htmlParts.join('');
@@ -8630,11 +10463,11 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             const highlightedHTML = buildHighlightedHTML(textContent);
             textEditor.innerHTML = highlightedHTML;
 
-        const highlightSpans = textEditor.querySelectorAll('[data-interactive-highlight="true"]');
-        if (highlightSpans.length > 0) {
-            const currentSpan = highlightSpans[currentMatchIndex] || highlightSpans[0];
-            currentSpan.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-        }
+            const highlightSpans = textEditor.querySelectorAll('[data-interactive-highlight="true"]');
+            if (highlightSpans.length > 0) {
+                const currentSpan = highlightSpans[currentMatchIndex] || highlightSpans[0];
+                currentSpan.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            }
 
             const inputHandler = () => {
                 const newText = textEditor.textContent || '';
@@ -8670,12 +10503,20 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         }
 
         if (textEditor.tagName === 'TEXTAREA' || textEditor.tagName === 'INPUT') {
+            if (textEditor._customEditorActive) {
+                if (textEditor._highlightState) {
+                    delete textEditor._highlightState;
+                }
+                updateCustomEditorOverlay(textEditor);
+                textEditor.classList.remove('genius-highlighting-active');
+                return;
+            }
             textEditor.classList.remove('genius-highlighting-active');
 
             // Restore original text color
             textEditor.style.color = '';
             textEditor.style.caretColor = '';
-            
+
             // Restore original spellcheck state
             if (textEditor._originalSpellcheck !== undefined) {
                 textEditor.spellcheck = textEditor._originalSpellcheck;
@@ -8686,17 +10527,17 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 textEditor.removeEventListener('scroll', textEditor._overlayScrollHandler);
                 delete textEditor._overlayScrollHandler;
             }
-            
+
             if (textEditor._overlayResizeHandler) {
                 window.removeEventListener('resize', textEditor._overlayResizeHandler);
                 delete textEditor._overlayResizeHandler;
             }
-            
+
             if (textEditor._overlayResizeObserver) {
                 textEditor._overlayResizeObserver.disconnect();
                 delete textEditor._overlayResizeObserver;
             }
-            
+
             if (textEditor._inputHandler) {
                 textEditor.removeEventListener('input', textEditor._inputHandler);
                 delete textEditor._inputHandler;
@@ -8760,7 +10601,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     function cleanupCurrentInteractivePopup() {
         if (currentInteractivePopup && currentInteractivePopup.popup) {
-            const { popup, keyHandler, updatePosition, scrollTarget } = currentInteractivePopup;
+            const { popup, keyHandler, updatePosition, scrollTarget, textEditor } = currentInteractivePopup;
             if (updatePosition) {
                 window.removeEventListener('scroll', updatePosition);
                 window.removeEventListener('resize', updatePosition);
@@ -8772,6 +10613,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             if (popup && popup.parentNode) {
                 popup.parentNode.removeChild(popup);
             }
+
+            // Clean up highlighting overlay to restore text visibility
+            if (textEditor) {
+                removeInteractiveHighlight(textEditor);
+            }
+
             currentInteractivePopup = null;
         }
     }
@@ -8779,8 +10626,19 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     function positionPopupNearHighlight(popup, textEditor, match) {
         const updatePosition = () => {
             // Find the highlight element
-            const highlightSpan = textEditor.querySelector ?
-                textEditor.querySelector('span[style*="background-color: rgba(255, 235, 59"]') : null;
+            let highlightSpan = null;
+
+            if (textEditor._customOverlay) {
+                const currentIndex = textEditor._highlightState?.currentMatchIndex;
+                if (currentIndex !== undefined && currentIndex !== null) {
+                    highlightSpan = textEditor._customOverlay.querySelector(`[data-interactive-highlight="true"][data-match-index="${currentIndex}"]`);
+                }
+                if (!highlightSpan) {
+                    highlightSpan = textEditor._customOverlay.querySelector('[data-interactive-highlight="true"]');
+                }
+            } else if (textEditor.querySelector) {
+                highlightSpan = textEditor.querySelector('span[style*"background-color: rgba(255, 235, 59"]');
+            }
 
             let targetRect = null;
 
@@ -8855,10 +10713,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     function positionPopupBelowFormatSection(popup) {
         const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
-                                 document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
-                                 document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
-                                 document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
-                                 document.querySelector('.ihioQH');
+            document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
+            document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
+            document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
+            document.querySelector('.ihioQH');
 
         // Look for the find/replace container first
         const findReplaceContainer = document.getElementById('genius-find-replace-container');
@@ -8866,7 +10724,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Look for lyricsSectionsButtonsContainer or LyricsEditExplainer
         const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
         const lyricsExplainer = controlsContainer && (controlsContainer.querySelector('[class*="LyricsEditExplainer__Container"]') ||
-                                   controlsContainer.querySelector('[class*="LyricsEditExplainer"]'));
+            controlsContainer.querySelector('[class*="LyricsEditExplainer"]'));
 
         const updatePosition = () => {
             // Position below find/replace but above lyricsSectionsContainer or LyricsEditExplainer
@@ -8907,13 +10765,436 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         return updatePosition;
     }
+
+    // Function to extract song context (language and dialect) from page metadata
+    function getSongContext() {
+        const context = {
+            language: null,
+            languages: [],
+            dialect: null,
+            dialects: [],
+            dropdownLanguage: null, // Language from Genius dropdown
+            tagLanguages: [],       // Languages from tags only
+            isManualOverride: false,
+            hasLanguageConflict: false,
+            hasDialectConflict: false
+        };
+
+        // Common country codes mapped to dialect identifiers (only US, CAN, UK)
+        // All other countries default to UK
+        const countryToDialect = {
+            'USA': 'US',
+            'US': 'US',
+            'UK': 'UK',
+            'ENG': 'UK',
+            'CAN': 'CAN',
+            'CANADA': 'CAN',
+            'IRL': 'UK',  // Ireland defaults to UK
+            'IRELAND': 'UK',
+            'AUS': 'UK',  // Australia defaults to UK
+            'AUSTRALIA': 'UK',
+            'NZ': 'UK',   // New Zealand defaults to UK
+            'NZL': 'UK',
+            'NEW ZEALAND': 'UK'
+        };
+
+        // Language tags from the tags section (exact format from Genius tags)
+        const languageTagMap = {
+            'IN ENGLISH': 'en',
+            'CHINESE (MANDARIN)': 'zh',
+            'EN ESPAÑOL': 'es',
+            'हिंदी (HINDI)': 'hi',
+            'ARABIC - عربي': 'ar',
+            'EM PORTUGUÊS': 'pt',
+            'বাংলা (BENGALI)': 'bn',
+            'РУССКИЙ (IN RUSSIAN)': 'ru',
+            'JAPANESE': 'ja',
+            'ਪੰਜਾਬੀ PUNJABI (GURMUKHĪ)': 'pa',
+            'AUF DEUTSCH': 'de',
+            'EN FRANÇAIS': 'fr',
+            'URDU - اُردُو': 'ur',
+            'IN ITALIANO': 'it',
+            'TÜRKÇE': 'tr',
+            'VIETNAMESE': 'vi',
+            'KOREAN': 'ko',
+            'தமிழ் (TAMIL)': 'ta',
+            'मराठी (MARATHI)': 'mr',
+            'THAI': 'th'
+        };
+
+        // Language dropdown values (from Genius language selector dropdown)
+        const dropdownLanguageMap = {
+            'ENGLISH': 'en',
+            'ESPAÑOL': 'es',
+            'DEUTSCH': 'de',
+            'FRANÇAIS': 'fr',
+            'ITALIANO': 'it',
+            'PORTUGUÊS': 'pt',
+            '日本語': 'ja',
+            '한국어': 'ko',
+            '中文': 'zh',
+            'РУССКИЙ': 'ru',
+            'العربية': 'ar',
+            'हिन्दी': 'hi',
+            'TÜRKÇE': 'tr',
+            'TIẾNG VIỆT': 'vi',
+            'ไทย': 'th',
+            'বাংলা': 'bn',
+            'ਪੰਜਾਬੀ': 'pa',
+            'தமிழ்': 'ta',
+            'मराठी': 'mr',
+            'اردو': 'ur'
+        };
+
+        // Language names (for display and logging)
+        const languageNames = {
+            'en': 'English',
+            'es': 'Spanish',
+            'de': 'German',
+            'fr': 'French',
+            'it': 'Italian',
+            'pt': 'Portuguese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'zh': 'Chinese',
+            'ru': 'Russian',
+            'ar': 'Arabic',
+            'hi': 'Hindi',
+            'tr': 'Turkish',
+            'vi': 'Vietnamese',
+            'th': 'Thai',
+            'bn': 'Bengali',
+            'pa': 'Punjabi',
+            'ta': 'Tamil',
+            'mr': 'Marathi',
+            'ur': 'Urdu'
+        };
+
+        try {
+            // Check for manual override first
+            if (autoFixSettings.manualLanguage) {
+                context.language = autoFixSettings.manualLanguage;
+                context.isManualOverride = true;
+                console.log(`🌍 Language: ${languageNames[context.language] || context.language} (manual override)`);
+            }
+            if (autoFixSettings.manualDialect) {
+                context.dialect = autoFixSettings.manualDialect;
+                context.isManualOverride = true;
+                console.log(`🌍 Dialect: ${context.dialect} (manual override)`);
+            }
+
+            // If manual override is set for both, return early
+            if (autoFixSettings.manualLanguage && autoFixSettings.manualDialect) {
+                return context;
+            }
+
+            // Step 1: Try to read language from window.__PRELOADED_STATE__ (Genius dropdown value)
+            if (window.__PRELOADED_STATE__) {
+                console.log(`🌍 [Detection] window.__PRELOADED_STATE__ exists`);
+                
+                let foundLanguage = null;
+                let actualSongObject = null;
+                
+                // Check if songPage exists and has a song reference
+                if (window.__PRELOADED_STATE__.songPage && window.__PRELOADED_STATE__.songPage.song) {
+                    const songRef = window.__PRELOADED_STATE__.songPage.song;
+                    console.log(`🌍 [Detection] songPage.song reference:`, songRef, typeof songRef);
+                    
+                    // If song is a number (ID), look it up in entities
+                    if (typeof songRef === 'number') {
+                        console.log(`🌍 [Detection] song is an ID (${songRef}), looking up in entities...`);
+                        
+                        if (window.__PRELOADED_STATE__.entities && window.__PRELOADED_STATE__.entities.songs) {
+                            actualSongObject = window.__PRELOADED_STATE__.entities.songs[songRef];
+                            if (actualSongObject) {
+                                console.log(`🌍 [Detection] Found song object in entities.songs[${songRef}], keys:`, Object.keys(actualSongObject));
+                            } else {
+                                console.log(`🌍 [Detection] Song ID ${songRef} not found in entities.songs`);
+                                console.log(`🌍 [Detection] Available song IDs:`, Object.keys(window.__PRELOADED_STATE__.entities.songs).slice(0, 10));
+                            }
+                        } else {
+                            console.log(`🌍 [Detection] entities.songs not available`);
+                            if (window.__PRELOADED_STATE__.entities) {
+                                console.log(`🌍 [Detection] entities keys:`, Object.keys(window.__PRELOADED_STATE__.entities));
+                            }
+                        }
+                    } else if (typeof songRef === 'object' && songRef !== null) {
+                        // song is already an object
+                        actualSongObject = songRef;
+                        console.log(`🌍 [Detection] song is already an object, keys:`, Object.keys(actualSongObject));
+                    }
+                    
+                    // Try to find language in the actual song object
+                    if (actualSongObject) {
+                        // Try multiple possible paths for language
+                        if (actualSongObject.language) {
+                            foundLanguage = actualSongObject.language;
+                            console.log(`🌍 [Detection] Found language at song.language:`, foundLanguage);
+                        } else if (actualSongObject.primaryLanguage) {
+                            foundLanguage = actualSongObject.primaryLanguage;
+                            console.log(`🌍 [Detection] Found language at song.primaryLanguage:`, foundLanguage);
+                        } else if (actualSongObject.languageTag) {
+                            foundLanguage = actualSongObject.languageTag;
+                            console.log(`🌍 [Detection] Found language at song.languageTag:`, foundLanguage);
+                        } else {
+                            // Log first few properties to help debug
+                            const songKeys = Object.keys(actualSongObject);
+                            console.log(`🌍 [Detection] Song object keys (${songKeys.length} total):`, songKeys.slice(0, 20));
+                            // Try to find any property that might contain language info
+                            for (const key of songKeys) {
+                                if (key.toLowerCase().includes('lang')) {
+                                    console.log(`🌍 [Detection] Found potential language property "${key}":`, actualSongObject[key]);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    console.log(`🌍 [Detection] songPage or songPage.song does not exist`);
+                }
+                
+                if (foundLanguage) {
+                    context.dropdownLanguage = foundLanguage.toLowerCase();
+                    console.log(`🌍 [Detection] Genius dropdown language: ${languageNames[context.dropdownLanguage] || context.dropdownLanguage} (${context.dropdownLanguage})`);
+                } else {
+                    console.log(`🌍 [Detection] No language found in Genius dropdown (checked: song.language, song.primaryLanguage, song.languageTag)`);
+                }
+            } else {
+                console.log(`🌍 [Detection] window.__PRELOADED_STATE__ not available`);
+            }
+
+            // Step 2: Extract tags from the page
+            const tagContainer = document.querySelector('div[class*="SongTags__Container"]');
+            if (tagContainer) {
+                const tagLinks = tagContainer.querySelectorAll('a');
+                const foundLanguageTags = [];
+                const foundDialectTags = [];
+
+                tagLinks.forEach(link => {
+                    const tagText = link.textContent.trim().toUpperCase();
+
+                    // Check if it's a language tag
+                    if (languageTagMap[tagText]) {
+                        const langCode = languageTagMap[tagText];
+                        if (!context.tagLanguages.includes(langCode)) {
+                            context.tagLanguages.push(langCode);
+                            foundLanguageTags.push(`${link.textContent.trim()} → ${languageNames[langCode] || langCode}`);
+                        }
+                    }
+
+                    // Check if it's a country/dialect tag
+                    if (countryToDialect[tagText]) {
+                        const dialectCode = countryToDialect[tagText];
+                        if (!context.dialects.includes(dialectCode)) {
+                            context.dialects.push(dialectCode);
+                            foundDialectTags.push(`${link.textContent.trim()} → ${dialectCode}`);
+                        }
+                    }
+                });
+
+                if (foundLanguageTags.length > 0) {
+                    console.log(`🌍 [Detection] Language tags found: ${foundLanguageTags.join(', ')}`);
+                } else {
+                    console.log(`🌍 [Detection] No language tags found in page tags`);
+                }
+                if (foundDialectTags.length > 0) {
+                    console.log(`🌍 [Detection] Dialect tags found: ${foundDialectTags.join(', ')}`);
+                }
+            } else {
+                console.log(`🌍 [Detection] Tag container not found on page`);
+            }
+
+            // Step 3: Fallback - check primary artist for disambiguation
+            if (context.dialects.length === 0) {
+                const artistLinks = document.querySelectorAll('a[class*="StyledLink"]');
+
+                for (const link of artistLinks) {
+                    const linkText = link.textContent.trim();
+                    const match = linkText.match(/\(([A-Z]{2,})\)$/);
+                    if (match) {
+                        const countryCode = match[1].toUpperCase();
+                        if (countryToDialect[countryCode]) {
+                            const dialectCode = countryToDialect[countryCode];
+                            if (!context.dialects.includes(dialectCode)) {
+                                context.dialects.push(dialectCode);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Step 4: Determine final language (if not manually overridden)
+            if (!autoFixSettings.manualLanguage) {
+                // Check for conflicts between dropdown and tags
+                const hasNonEnglishTag = context.tagLanguages.some(lang => lang !== 'en');
+                const hasEnglishTag = context.tagLanguages.includes('en');
+
+                // Special case: Genius defaults to English, but check if tags contradict
+                if (context.dropdownLanguage === 'en') {
+                    if (hasNonEnglishTag && !hasEnglishTag) {
+                        // Dropdown says English but only non-English tags exist - conflict!
+                        context.hasLanguageConflict = true;
+                        context.language = 'mixed';
+                        console.log(`🌍 [Detection] Language conflict detected: Dropdown says English but tags indicate ${context.tagLanguages.map(l => languageNames[l] || l).join(', ')}`);
+                    } else if (hasEnglishTag) {
+                        // English with "In English" tag - confirmed English
+                        context.language = 'en';
+                        console.log(`🌍 [Detection] Language determined: English (from dropdown + "In English" tag)`);
+                    } else if (context.tagLanguages.length === 0) {
+                        // No language tags - use dropdown default
+                        context.language = 'en';
+                        console.log(`🌍 [Detection] Language determined: English (from Genius dropdown, no language tags found)`);
+                    } else if (context.tagLanguages.length > 1) {
+                        // Multiple language tags
+                        context.hasLanguageConflict = true;
+                        context.language = 'mixed';
+                        console.log(`🌍 [Detection] Multiple language tags detected: ${context.tagLanguages.map(l => languageNames[l] || l).join(', ')}`);
+                    } else {
+                        context.language = 'en';
+                        console.log(`🌍 [Detection] Language determined: English (from Genius dropdown)`);
+                    }
+                } else if (context.dropdownLanguage) {
+                    // Non-English dropdown language
+                    if (context.tagLanguages.length > 1) {
+                        // Multiple language tags
+                        context.hasLanguageConflict = true;
+                        context.language = 'mixed';
+                        console.log(`🌍 [Detection] Multiple language tags detected: ${context.tagLanguages.map(l => languageNames[l] || l).join(', ')}`);
+                    } else if (context.tagLanguages.length === 1 && context.tagLanguages[0] !== context.dropdownLanguage) {
+                        // Tag doesn't match dropdown
+                        context.hasLanguageConflict = true;
+                        context.language = 'mixed';
+                        console.log(`🌍 [Detection] Language mismatch: Dropdown says ${languageNames[context.dropdownLanguage] || context.dropdownLanguage} but tag says ${languageNames[context.tagLanguages[0]] || context.tagLanguages[0]}`);
+                    } else {
+                        context.language = context.dropdownLanguage;
+                        if (context.tagLanguages.length === 1) {
+                            console.log(`🌍 [Detection] Language determined: ${languageNames[context.language] || context.language} (from dropdown + matching tag)`);
+                        } else {
+                            console.log(`🌍 [Detection] Language determined: ${languageNames[context.language] || context.language} (from Genius dropdown)`);
+                        }
+                    }
+                } else if (context.tagLanguages.length === 1) {
+                    // Only tag languages, no dropdown
+                    context.language = context.tagLanguages[0];
+                    console.log(`🌍 [Detection] Language determined: ${languageNames[context.language] || context.language} (from page tag, no dropdown value)`);
+                } else if (context.tagLanguages.length > 1) {
+                    // Multiple tag languages
+                    context.hasLanguageConflict = true;
+                    context.language = 'mixed';
+                    console.log(`🌍 [Detection] Multiple language tags detected: ${context.tagLanguages.map(l => languageNames[l] || l).join(', ')}`);
+                } else {
+                    // Default to English if nothing detected
+                    context.language = 'en';
+                    console.log(`🌍 [Detection] Language determined: English (default - no dropdown or tags found)`);
+                }
+
+                // Build languages array for compatibility
+                if (context.dropdownLanguage && !context.languages.includes(context.dropdownLanguage)) {
+                    context.languages.push(context.dropdownLanguage);
+                }
+                context.tagLanguages.forEach(lang => {
+                    if (!context.languages.includes(lang)) {
+                        context.languages.push(lang);
+                    }
+                });
+            }
+
+            // Step 5: Determine final dialect (if not manually overridden)
+            if (!autoFixSettings.manualDialect) {
+                // If there are multiple language tags, disable dialect-specific fixes
+                if (context.tagLanguages.length > 1) {
+                    context.hasDialectConflict = true;
+                    context.dialect = 'mixed';
+                    console.log(`🌍 [Detection] Multiple language tags detected (${context.tagLanguages.length}), disabling dialect-specific fixes`);
+                } else if (context.dialects.length === 1) {
+                    context.dialect = context.dialects[0];
+                    console.log(`🌍 [Detection] Dialect determined: ${context.dialect} (from page tag)`);
+                } else if (context.dialects.length > 1) {
+                    context.hasDialectConflict = true;
+                    context.dialect = 'mixed';
+                    console.log(`🌍 [Detection] Multiple dialect tags detected: ${context.dialects.join(', ')}`);
+                } else {
+                    // Default to US if no dialect detected and language is English
+                    if (context.language === 'en') {
+                        context.dialect = 'US';
+                        console.log(`🌍 [Detection] Dialect determined: US (default for English, no dialect tags found)`);
+                    } else {
+                        context.dialect = null;
+                        console.log(`🌍 [Detection] No dialect (language is ${languageNames[context.language] || context.language}, dialects only apply to English)`);
+                    }
+                }
+            }
+
+            // Log final detected context summary
+            if (!context.isManualOverride) {
+                const langName = languageNames[context.language] || context.language;
+                if (context.hasLanguageConflict) {
+                    console.log(`🌍 [Final] Language: MIXED/CONFLICT - language-specific autofixes disabled`);
+                } else {
+                    console.log(`🌍 [Final] Language: ${langName} (${context.language})`);
+                }
+                if (context.dialect) {
+                    if (context.hasDialectConflict) {
+                        console.log(`🌍 [Final] Dialect: MIXED/CONFLICT - dialect-specific autofixes disabled`);
+                    } else {
+                        console.log(`🌍 [Final] Dialect: ${context.dialect}`);
+                    }
+                } else if (context.language === 'en') {
+                    console.log(`🌍 [Final] Dialect: None (defaulting to US for autofixes)`);
+                }
+            }
+
+        } catch (error) {
+            console.error('Error detecting song context:', error);
+        }
+
+        return context;
+    }
+
+    // Get available languages for the language selector UI
+    function getAvailableLanguages() {
+        return [
+            { code: null, name: 'Auto-detect' },
+            { code: 'en', name: 'English' },
+            { code: 'es', name: 'Spanish (Español)' },
+            { code: 'de', name: 'German (Deutsch)' },
+            { code: 'fr', name: 'French (Français)' },
+            { code: 'it', name: 'Italian (Italiano)' },
+            { code: 'pt', name: 'Portuguese (Português)' },
+            { code: 'ja', name: 'Japanese (日本語)' },
+            { code: 'ko', name: 'Korean (한국어)' },
+            { code: 'zh', name: 'Chinese (中文)' },
+            { code: 'ru', name: 'Russian (Русский)' },
+            { code: 'ar', name: 'Arabic (العربية)' },
+            { code: 'hi', name: 'Hindi (हिन्दी)' },
+            { code: 'tr', name: 'Turkish (Türkçe)' },
+            { code: 'vi', name: 'Vietnamese (Tiếng Việt)' },
+            { code: 'th', name: 'Thai (ไทย)' },
+            { code: 'bn', name: 'Bengali (বাংলা)' },
+            { code: 'pa', name: 'Punjabi (ਪੰਜਾਬੀ)' },
+            { code: 'ta', name: 'Tamil (தமிழ்)' },
+            { code: 'mr', name: 'Marathi (मराठी)' },
+            { code: 'ur', name: 'Urdu (اردو)' }
+        ];
+    }
+
+    // Get available dialects for the dialect selector UI (only US, CAN, UK)
+    function getAvailableDialects() {
+        return [
+            { code: null, name: 'Auto-detect' },
+            { code: 'US', name: 'US English' },
+            { code: 'CAN', name: 'Canadian English' },
+            { code: 'UK', name: 'UK English' }
+        ];
+    }
+
     // Function to perform auto fix on lyrics text
     function performAutoFix() {
         // Find the active text editor
         const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                          document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
-                          document.querySelector('textarea') ||
-                          document.querySelector('[contenteditable="true"]');
+            document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+            document.querySelector('textarea') ||
+            document.querySelector('[contenteditable="true"]');
 
         if (!textEditor) {
             console.log('No text editor found for auto fix');
@@ -8934,6 +11215,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         console.log('Original text length:', text.length);
 
+        // Detect song context (language and dialect) - logging handled inside getSongContext
+        const songContext = getSongContext();
+
         // Apply auto fixes
         let fixedText = text;
         let textAppliedToEditor = false;
@@ -8953,16 +11237,16 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 // Dispatch multiple events to ensure page responds
                 textEditor.dispatchEvent(new Event('input', { bubbles: true }));
                 textEditor.dispatchEvent(new Event('change', { bubbles: true }));
-                
+
                 // Resize textarea to fit new content
                 resizeTextareaToFit(textEditor);
-                
+
                 // Force layout recalculation by triggering a reflow
                 void textEditor.offsetHeight;
-                
+
                 // Scroll to ensure cursor is visible (helps with layout updates)
                 textEditor.scrollTop = textEditor.scrollTop;
-                
+
                 // Trigger window resize to force page layout recalculation
                 window.dispatchEvent(new Event('resize'));
             } else if (textEditor.isContentEditable) {
@@ -8986,10 +11270,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
                 textEditor.dispatchEvent(new Event('input', { bubbles: true }));
                 textEditor.dispatchEvent(new Event('change', { bubbles: true }));
-                
+
                 // Force layout recalculation
                 void textEditor.offsetHeight;
-                
+
                 // Trigger window resize to force page layout recalculation
                 window.dispatchEvent(new Event('resize'));
             }
@@ -8999,14 +11283,65 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         console.log('Before fixes:', fixedText.substring(0, 100) + '...');
 
+        // Helper function to check if a rule should be applied based on context
+        const shouldApplyRule = (rule) => {
+            // Check language constraint
+            if (rule.language) {
+                // If song has mixed languages or no language detected, skip language-specific rules
+                if (!songContext.language || songContext.language === 'mixed') {
+                    return false;
+                }
+
+                // Check if rule's language matches song's language
+                const ruleLanguages = Array.isArray(rule.language) ? rule.language : [rule.language];
+                if (!ruleLanguages.includes(songContext.language)) {
+                    return false;
+                }
+            }
+
+            // Check dialect constraint
+            if (rule.dialect) {
+                // If song has mixed dialects or no dialect detected, skip dialect-specific rules
+                if (!songContext.dialect || songContext.dialect === 'mixed') {
+                    return false;
+                }
+
+                // Check if rule's dialect matches song's dialect
+                const ruleDialects = Array.isArray(rule.dialect) ? rule.dialect : [rule.dialect];
+                if (!ruleDialects.includes(songContext.dialect)) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
         // Helper function to apply rules from built-in rule groups by tag
         const applyRulesByTag = (tag, enabled, contextLabel) => {
             if (!enabled) return;
-            
+
             console.log(`Applying rules with tag "${tag}" from built-in groups...`);
-            
+
+            // Protect annotations before applying rules, but store text separately for processing
+            const protectedAnnotations = [];
+            let protectedText = fixedText;
+            let annotationIndex = 0;
+
+            // Find and protect all Genius annotations [text](numbers)
+            // Store the text separately so we can apply rules to it later
+            protectedText = protectedText.replace(/\[([^\]]+)\]\((\d+)\)/g, function (match, text, numbers) {
+                const placeholder = `__ANNOTATION_TAG_${annotationIndex}__`;
+                protectedAnnotations.push({ placeholder, originalText: text, numbers: numbers, original: match });
+                annotationIndex++;
+                return placeholder;
+            });
+
+            // Work with protected text
+            fixedText = protectedText;
+
             // Find all rules with the specified tag from built-in rule groups
             const rulesToApply = [];
+            let skippedRulesCount = 0;
             if (autoFixSettings.ruleGroups) {
                 autoFixSettings.ruleGroups.forEach(group => {
                     // Check if group is built-in AND enabled
@@ -9014,13 +11349,23 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                         group.rules.forEach(rule => {
                             // Check if rule has the tag and is not explicitly disabled
                             if (rule.tags && rule.tags.includes(tag) && rule.enabled !== false) {
-                                rulesToApply.push({...rule, contextLabel: `${group.title} (built-in)`});
+                                // Check if rule should be applied based on language/dialect context
+                                if (shouldApplyRule(rule)) {
+                                    rulesToApply.push({ ...rule, contextLabel: `${group.title} (built-in)` });
+                                } else {
+                                    skippedRulesCount++;
+                                    console.log(`⏭️ Skipped rule "${rule.description}" due to context mismatch`);
+                                }
                             }
                         });
                     }
                 });
             }
-            
+
+            if (skippedRulesCount > 0) {
+                console.log(`⏭️ Skipped ${skippedRulesCount} rule(s) due to language/dialect context`);
+            }
+
             // Apply each rule
             rulesToApply.forEach(rule => {
                 try {
@@ -9056,7 +11401,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     }
 
                     const regex = new RegExp(processedFind, processedFlags);
-                    
+
                     if (typeof replaceValue === 'function') {
                         fixedText = fixedText.replace(regex, replaceValue);
                     } else {
@@ -9070,7 +11415,67 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     console.log(`Rule "${rule.description}" from ${rule.contextLabel} failed:`, e.message);
                 }
             });
-            
+
+            // Restore annotations after all rules have been applied
+            // Apply rules to annotation text before restoring
+            protectedAnnotations.forEach(({ placeholder, originalText, numbers, original }) => {
+                let processedText = originalText;
+                
+                // Apply the same rules to the annotation text
+                rulesToApply.forEach(rule => {
+                    try {
+                        let processedFind = rule.find;
+                        let processedFlags = rule.flags || 'gi';
+
+                        if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                            processedFlags = processedFlags.replace(/e/g, '');
+                            const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                            const startBoundary = `(?<=^|${boundaryChars})`;
+                            const endBoundary = `(?=${boundaryChars}|$)`;
+
+                            if (processedFind.includes('\\b')) {
+                                processedFind = processedFind
+                                    .replace(/^\\b/, startBoundary)
+                                    .replace(/\\b$/, endBoundary)
+                                    .replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+                            } else {
+                                processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                            }
+                        }
+
+                        let replaceValue = rule.replace;
+                        if (typeof replaceValue === 'string') {
+                            const trimmed = replaceValue.trim();
+                            if (trimmed.startsWith('function') || trimmed.startsWith('(')) {
+                                try {
+                                    replaceValue = eval(trimmed);
+                                } catch (error) {
+                                    // Skip this rule if evaluation fails
+                                }
+                            }
+                        }
+
+                        const regex = new RegExp(processedFind, processedFlags);
+
+                        if (typeof replaceValue === 'function') {
+                            processedText = processedText.replace(regex, replaceValue);
+                        } else {
+                            let jsReplacement = replaceValue;
+                            if (typeof jsReplacement === 'string') {
+                                jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                            }
+                            processedText = processedText.replace(regex, jsReplacement);
+                        }
+                    } catch (e) {
+                        // Skip this rule if it fails
+                    }
+                });
+                
+                // Reconstruct annotation with processed text and original numbers
+                const reconstructedAnnotation = `[${processedText}](${numbers})`;
+                fixedText = fixedText.replace(placeholder, reconstructedAnnotation);
+            });
+
             console.log(`Applied ${rulesToApply.length} rules with tag "${tag}"`);
         };
 
@@ -9081,7 +11486,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             applyRulesByTag('spelling', true, 'Spelling fixes');
             applyRulesByTag('apostrophes', true, 'Apostrophe fixes');
         }
-        
+
         // Apply punctuation rules (always enabled with customRegex)
         if (autoFixSettings.customRegex) {
             applyRulesByTag('punctuation', true, 'Punctuation fixes');
@@ -9091,196 +11496,196 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         if (autoFixSettings.parenthesesFormatting) {
             console.log('Starting parentheses fixes...');
 
-        // Helper function to check if a match is an annotation [text](numbers)
-        function isAnnotation(fullMatch, offset, string) {
-            // Check if the match contains the annotation pattern: ](only digits)
-            const annotationPattern = /\]\([^\)]*\d[^\)]*\)(?:<\/[bi]>)?$/;
-            if (annotationPattern.test(fullMatch)) {
-                // Extract the parenthetical content to verify it's only digits
-                const parenContent = fullMatch.match(/\]\(([^\)]+)\)/);
-                if (parenContent && /^\d+$/.test(parenContent[1])) {
-                    return true;
+            // Helper function to check if a match is an annotation [text](numbers)
+            function isAnnotation(fullMatch, offset, string) {
+                // Check if the match contains the annotation pattern: ](only digits)
+                const annotationPattern = /\]\([^\)]*\d[^\)]*\)(?:<\/[bi]>)?$/;
+                if (annotationPattern.test(fullMatch)) {
+                    // Extract the parenthetical content to verify it's only digits
+                    const parenContent = fullMatch.match(/\]\(([^\)]+)\)/);
+                    if (parenContent && /^\d+$/.test(parenContent[1])) {
+                        return true;
+                    }
                 }
+                return false;
             }
-            return false;
-        }
 
-        // Handle nested formatting tags first (e.g., <i><b>(content)</b></i>)
-        // This handles cases where we have nested tags with parentheses
-        fixedText = fixedText.replace(/<(i|b)><(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\2><\/\1>/gi, function(match, outerTag, innerTag, content, offset, string) {
-            // Check if this is an annotation pattern
-            if (isAnnotation(match, offset, string)) {
-                return match; // Don't modify annotations
-            }
-            
-            if (content.includes('(') && content.includes(')')) {
-                console.log('Processing nested formatting block:', match.substring(0, 50) + '...');
+            // Handle nested formatting tags first (e.g., <i><b>(content)</b></i>)
+            // This handles cases where we have nested tags with parentheses
+            fixedText = fixedText.replace(/<(i|b)><(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\2><\/\1>/gi, function (match, outerTag, innerTag, content, offset, string) {
+                // Check if this is an annotation pattern
+                if (isAnnotation(match, offset, string)) {
+                    return match; // Don't modify annotations
+                }
 
-                // Split content by parentheses and rebuild with both tags
-                let result = '';
-                let remaining = content;
+                if (content.includes('(') && content.includes(')')) {
+                    console.log('Processing nested formatting block:', match.substring(0, 50) + '...');
 
-                while (remaining.includes('(') && remaining.includes(')')) {
-                    const openIndex = remaining.indexOf('(');
-                    const closeIndex = remaining.indexOf(')', openIndex);
+                    // Split content by parentheses and rebuild with both tags
+                    let result = '';
+                    let remaining = content;
 
-                    if (openIndex === -1 || closeIndex === -1) break;
+                    while (remaining.includes('(') && remaining.includes(')')) {
+                        const openIndex = remaining.indexOf('(');
+                        const closeIndex = remaining.indexOf(')', openIndex);
 
-                    // Add text before the parenthesis (if any) with both formatting tags
-                    const beforeParen = remaining.substring(0, openIndex);
-                    if (beforeParen) {
+                        if (openIndex === -1 || closeIndex === -1) break;
+
+                        // Add text before the parenthesis (if any) with both formatting tags
+                        const beforeParen = remaining.substring(0, openIndex);
+                        if (beforeParen) {
+                            // If it's just whitespace, don't wrap in formatting tags
+                            if (beforeParen.trim()) {
+                                result += `<${outerTag}><${innerTag}>${beforeParen}</${innerTag}></${outerTag}>`;
+                            } else {
+                                result += beforeParen; // Just add the whitespace as-is
+                            }
+                        }
+
+                        // Add the parenthetical content with both formatting tags inside
+                        const parenContent = remaining.substring(openIndex + 1, closeIndex);
+                        result += `(<${outerTag}><${innerTag}>${parenContent}</${innerTag}></${outerTag}>)`;
+
+                        // Continue with remaining text
+                        remaining = remaining.substring(closeIndex + 1);
+                    }
+
+                    // Add any remaining text with both formatting tags
+                    if (remaining) {
                         // If it's just whitespace, don't wrap in formatting tags
-                        if (beforeParen.trim()) {
-                            result += `<${outerTag}><${innerTag}>${beforeParen}</${innerTag}></${outerTag}>`;
+                        if (remaining.trim()) {
+                            result += `<${outerTag}><${innerTag}>${remaining}</${innerTag}></${outerTag}>`;
                         } else {
-                            result += beforeParen; // Just add the whitespace as-is
+                            result += remaining; // Just add the whitespace as-is
                         }
                     }
 
-                    // Add the parenthetical content with both formatting tags inside
-                    const parenContent = remaining.substring(openIndex + 1, closeIndex);
-                    result += `(<${outerTag}><${innerTag}>${parenContent}</${innerTag}></${outerTag}>)`;
+                    return result;
+                }
+                return match; // No parentheses, return unchanged
+            });
 
-                    // Continue with remaining text
-                    remaining = remaining.substring(closeIndex + 1);
+            // Handle complex single-tag multiline cases
+            // Pattern: <b> or <i> that contains multiple parenthetical groups
+            fixedText = fixedText.replace(/<(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\1>/gi, function (match, tag, content, offset, string) {
+                // Check if this is an annotation pattern
+                if (isAnnotation(match, offset, string)) {
+                    return match; // Don't modify annotations
                 }
 
-                // Add any remaining text with both formatting tags
-                if (remaining) {
-                    // If it's just whitespace, don't wrap in formatting tags
-                    if (remaining.trim()) {
-                        result += `<${outerTag}><${innerTag}>${remaining}</${innerTag}></${outerTag}>`;
-                    } else {
-                        result += remaining; // Just add the whitespace as-is
+                // If the content contains parentheses, process it
+                if (content.includes('(') && content.includes(')')) {
+                    console.log('Processing single-tag multiline formatting block:', match.substring(0, 50) + '...');
+
+                    // Split content by parentheses and rebuild
+                    let result = '';
+                    let remaining = content;
+
+                    while (remaining.includes('(') && remaining.includes(')')) {
+                        const openIndex = remaining.indexOf('(');
+                        const closeIndex = remaining.indexOf(')', openIndex);
+
+                        if (openIndex === -1 || closeIndex === -1) break;
+
+                        // Add text before the parenthesis (if any) with formatting
+                        const beforeParen = remaining.substring(0, openIndex);
+                        if (beforeParen) {
+                            // If it's just whitespace, don't wrap in formatting tags
+                            if (beforeParen.trim()) {
+                                result += `<${tag}>${beforeParen}</${tag}>`;
+                            } else {
+                                result += beforeParen; // Just add the whitespace as-is
+                            }
+                        }
+
+                        // Add the parenthetical content with formatting inside
+                        const parenContent = remaining.substring(openIndex + 1, closeIndex);
+                        result += `(<${tag}>${parenContent}</${tag}>)`;
+
+                        // Continue with remaining text
+                        remaining = remaining.substring(closeIndex + 1);
                     }
-                }
 
-                return result;
-            }
-            return match; // No parentheses, return unchanged
-        });
-
-        // Handle complex single-tag multiline cases
-        // Pattern: <b> or <i> that contains multiple parenthetical groups
-        fixedText = fixedText.replace(/<(b|i)>([^<]*?(?:\([^)]*\)[^<]*?)*)<\/\1>/gi, function(match, tag, content, offset, string) {
-            // Check if this is an annotation pattern
-            if (isAnnotation(match, offset, string)) {
-                return match; // Don't modify annotations
-            }
-            
-            // If the content contains parentheses, process it
-            if (content.includes('(') && content.includes(')')) {
-                console.log('Processing single-tag multiline formatting block:', match.substring(0, 50) + '...');
-
-                // Split content by parentheses and rebuild
-                let result = '';
-                let remaining = content;
-
-                while (remaining.includes('(') && remaining.includes(')')) {
-                    const openIndex = remaining.indexOf('(');
-                    const closeIndex = remaining.indexOf(')', openIndex);
-
-                    if (openIndex === -1 || closeIndex === -1) break;
-
-                    // Add text before the parenthesis (if any) with formatting
-                    const beforeParen = remaining.substring(0, openIndex);
-                    if (beforeParen) {
+                    // Add any remaining text with formatting
+                    if (remaining) {
                         // If it's just whitespace, don't wrap in formatting tags
-                        if (beforeParen.trim()) {
-                            result += `<${tag}>${beforeParen}</${tag}>`;
+                        if (remaining.trim()) {
+                            result += `<${tag}>${remaining}</${tag}>`;
                         } else {
-                            result += beforeParen; // Just add the whitespace as-is
+                            result += remaining; // Just add the whitespace as-is
                         }
                     }
 
-                    // Add the parenthetical content with formatting inside
-                    const parenContent = remaining.substring(openIndex + 1, closeIndex);
-                    result += `(<${tag}>${parenContent}</${tag}>)`;
-
-                    // Continue with remaining text
-                    remaining = remaining.substring(closeIndex + 1);
+                    return result;
                 }
+                return match; // No parentheses, return unchanged
+            });
 
-                // Add any remaining text with formatting
-                if (remaining) {
-                    // If it's just whitespace, don't wrap in formatting tags
-                    if (remaining.trim()) {
-                        result += `<${tag}>${remaining}</${tag}>`;
-                    } else {
-                        result += remaining; // Just add the whitespace as-is
-                    }
+            // Handle simple nested cases: <i><b>(content)</b></i> -> (<i><b>content</b></i>)
+            fixedText = fixedText.replace(/<(i|b)><(b|i)>\(([^)]*)\)<\/\2><\/\1>/gi, function (match, outerTag, innerTag, content, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
                 }
+                return `(<${outerTag}><${innerTag}>${content}</${innerTag}></${outerTag}>)`;
+            });
 
-                return result;
-            }
-            return match; // No parentheses, return unchanged
-        });
-
-        // Handle simple nested cases: <i><b>(content)</b></i> -> (<i><b>content</b></i>)
-        fixedText = fixedText.replace(/<(i|b)><(b|i)>\(([^)]*)\)<\/\2><\/\1>/gi, function(match, outerTag, innerTag, content, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            return `(<${outerTag}><${innerTag}>${content}</${innerTag}></${outerTag}>)`;
-        });
-
-        // Handle simple single parenthetical cases
-        // Pattern: <b>(content)</b> or <i>(content)</i> -> (<b>content</b>) or (<i>content</i>)
-        fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            return `(<${tag}>${content}</${tag}>)`;
-        });
-
-        // Handle edge case: <i>(content</i>) -> (<i>content</i>)
-        // Pattern: tag starts with parenthesis but closing parenthesis is outside the tag
-        fixedText = fixedText.replace(/<(b|i)>\(([^<]*)<\/\1>\)/gi, function(match, tag, content, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            return `(<${tag}>${content}</${tag}>)`;
-        });
-
-        // Handle edge case: (<i>content)</i> -> (<i>content</i>)
-        // Pattern: opening parenthesis is outside tag but closing parenthesis is inside the tag
-        fixedText = fixedText.replace(/\(<(b|i)>([^<]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            return `(<${tag}>${content}</${tag}>)`;
-        });
-
-        // Handle edge case: mixed parentheses with tags
-        // Pattern: (<i>content</i>) -> (<i>content</i>) (already correct, but clean up any malformed versions)
-        // This handles cases like: (<i>text) followed by </i> somewhere else
-        fixedText = fixedText.replace(/\(<(b|i)>([^<)]+)\)([^<]*)<\/\1>/gi, function(match, tag, content, afterParen, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            // If there's content after the closing parenthesis but before the closing tag,
-            // it means the parenthesis should be moved outside
-            if (afterParen.trim() === '') {
+            // Handle simple single parenthetical cases
+            // Pattern: <b>(content)</b> or <i>(content)</i> -> (<b>content</b>) or (<i>content</i>)
+            fixedText = fixedText.replace(/<(b|i)>\(([^)]*)\)<\/\1>/gi, function (match, tag, content, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
+                }
                 return `(<${tag}>${content}</${tag}>)`;
-            }
-            return match; // Don't change if there's actual content after the parenthesis
-        });
+            });
 
-        // Handle the reverse case: <i>content)</i> where opening paren is missing or outside
-        // This catches orphaned closing parentheses inside tags and moves them outside
-        fixedText = fixedText.replace(/<(b|i)>([^<(]*)\)<\/\1>/gi, function(match, tag, content, offset, string) {
-            if (isAnnotation(match, offset, string)) {
-                return match;
-            }
-            // Check if there's an opening parenthesis before this tag in a reasonable range
-            const beforeTag = string.substring(Math.max(0, offset - 50), offset);
-            if (beforeTag.includes('(')) {
-                // There's a parenthesis before, so move the closing one outside
-                return `<${tag}>${content}</${tag}>)`;
-            }
-            // No matching opening parenthesis found, leave as is or wrap completely
-            return `(<${tag}>${content}</${tag}>)`;
-        });
+            // Handle edge case: <i>(content</i>) -> (<i>content</i>)
+            // Pattern: tag starts with parenthesis but closing parenthesis is outside the tag
+            fixedText = fixedText.replace(/<(b|i)>\(([^<]*)<\/\1>\)/gi, function (match, tag, content, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
+                }
+                return `(<${tag}>${content}</${tag}>)`;
+            });
+
+            // Handle edge case: (<i>content)</i> -> (<i>content</i>)
+            // Pattern: opening parenthesis is outside tag but closing parenthesis is inside the tag
+            fixedText = fixedText.replace(/\(<(b|i)>([^<]*)\)<\/\1>/gi, function (match, tag, content, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
+                }
+                return `(<${tag}>${content}</${tag}>)`;
+            });
+
+            // Handle edge case: mixed parentheses with tags
+            // Pattern: (<i>content</i>) -> (<i>content</i>) (already correct, but clean up any malformed versions)
+            // This handles cases like: (<i>text) followed by </i> somewhere else
+            fixedText = fixedText.replace(/\(<(b|i)>([^<)]+)\)([^<]*)<\/\1>/gi, function (match, tag, content, afterParen, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
+                }
+                // If there's content after the closing parenthesis but before the closing tag,
+                // it means the parenthesis should be moved outside
+                if (afterParen.trim() === '') {
+                    return `(<${tag}>${content}</${tag}>)`;
+                }
+                return match; // Don't change if there's actual content after the parenthesis
+            });
+
+            // Handle the reverse case: <i>content)</i> where opening paren is missing or outside
+            // This catches orphaned closing parentheses inside tags and moves them outside
+            fixedText = fixedText.replace(/<(b|i)>([^<(]*)\)<\/\1>/gi, function (match, tag, content, offset, string) {
+                if (isAnnotation(match, offset, string)) {
+                    return match;
+                }
+                // Check if there's an opening parenthesis before this tag in a reasonable range
+                const beforeTag = string.substring(Math.max(0, offset - 50), offset);
+                if (beforeTag.includes('(')) {
+                    // There's a parenthesis before, so move the closing one outside
+                    return `<${tag}>${content}</${tag}>)`;
+                }
+                // No matching opening parenthesis found, leave as is or wrap completely
+                return `(<${tag}>${content}</${tag}>)`;
+            });
 
             console.log('After parentheses fixes:', fixedText.includes('(<b>') || fixedText.includes('(<i>') ? 'FOUND FIXED PARENTHESES' : 'NO PARENTHESES FIXES APPLIED');
         }
@@ -9310,7 +11715,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
             // First, find all sequences that might be stutter patterns
             // Look for: word— followed by potential repetitions
-            fixedText = fixedText.replace(/\b([a-zA-Z]+)—\s*([a-zA-Z]+)(?:—\s*[a-zA-Z]+)*\b/gi, function(match) {
+            fixedText = fixedText.replace(/\b([a-zA-Z]+)—\s*([a-zA-Z]+)(?:—\s*[a-zA-Z]+)*\b/gi, function (match) {
                 console.log('Analyzing potential stutter pattern:', match);
 
                 // Split by emdash and clean up whitespace
@@ -9369,14 +11774,6 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             });
         }
 
-        // Capitalize first letter inside parentheses
-        if (autoFixSettings.capitalizeParentheses) {
-            console.log('Capitalizing first letter in parentheses...');
-            fixedText = fixedText.replace(/(?<!<[^>]*)\(([a-z])/g, function(match, firstChar) {
-                return '(' + firstChar.toUpperCase();
-            });
-        }
-
         // Apply formatting rules (spacing)
         if (autoFixSettings.customRegex) {
             applyRulesByTag('formatting', true, 'Formatting fixes');
@@ -9388,9 +11785,37 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         if (autoFixSettings.customRegex) {
             console.log('Applying custom regex rules...');
 
+            // Protect annotations before applying rules, but store text separately for processing
+            const protectedAnnotations = [];
+            let protectedText = fixedText;
+            let annotationIndex = 0;
+
+            // Find and protect all Genius annotations [text](numbers)
+            // Store the text separately so we can apply rules to it later
+            protectedText = protectedText.replace(/\[([^\]]+)\]\((\d+)\)/g, function (match, text, numbers) {
+                const placeholder = `__ANNOTATION_${annotationIndex}__`;
+                protectedAnnotations.push({ placeholder, originalText: text, numbers: numbers, original: match });
+                annotationIndex++;
+                return placeholder;
+            });
+
+            // Work with protected text
+            fixedText = protectedText;
+            
+            // Collect all rules that will be processed for annotation text processing
+            const allRulesToProcess = [];
+
             const processRules = (rules, contextLabel) => {
+                let skippedContextRules = 0;
                 rules.forEach(rule => {
                     if (rule.enabled === false) {
+                        return;
+                    }
+
+                    // Check if rule should be applied based on language/dialect context
+                    if (!shouldApplyRule(rule)) {
+                        skippedContextRules++;
+                        console.log(`⏭️ Skipped rule "${rule.description}" from ${contextLabel} due to context mismatch`);
                         return;
                     }
 
@@ -9451,6 +11876,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                             console.log(`Interactive rule "${rule.description}" from ${contextLabel} queued for review`);
                         } else {
                             // mode === 'auto' or default
+                            // Collect rules that are actually auto-applied for annotation processing
+                            allRulesToProcess.push(rule);
                             const regex = new RegExp(processedFind, processedFlags);
                             const beforeLength = fixedText.length;
 
@@ -9473,6 +11900,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                         console.log(`Custom regex rule "${rule.description}" from ${contextLabel} failed:`, e.message);
                     }
                 });
+
+                if (skippedContextRules > 0) {
+                    console.log(`⏭️ Skipped ${skippedContextRules} rule(s) from ${contextLabel} due to language/dialect context`);
+                }
             };
 
             if (autoFixSettings.ruleGroups) {
@@ -9486,15 +11917,68 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             if (autoFixSettings.ungroupedRules) {
                 processRules(autoFixSettings.ungroupedRules, 'ungrouped rules');
             }
+
+            // Restore annotations after all rules have been applied
+            // Apply rules to annotation text before restoring
+            protectedAnnotations.forEach(({ placeholder, originalText, numbers, original }) => {
+                let processedText = originalText;
+                
+                // Apply the same rules to the annotation text
+                allRulesToProcess.forEach(rule => {
+                    try {
+                        let processedFind = rule.find;
+                        let processedFlags = rule.flags || 'gi';
+
+                        if (rule.enhancedBoundary && processedFlags.includes('e')) {
+                            processedFlags = processedFlags.replace(/e/g, '');
+                            const boundaryChars = '[\\s\\[\\]\\(\\),.!?;:"\'`~@#$%^&*+={}|<>/—–-]';
+                            const startBoundary = `(?<=^|${boundaryChars})`;
+                            const endBoundary = `(?=${boundaryChars}|$)`;
+
+                            if (processedFind.includes('\\b')) {
+                                processedFind = processedFind
+                                    .replace(/^\\b/, startBoundary)
+                                    .replace(/\\b$/, endBoundary)
+                                    .replace(/\\b/g, `(?<=${boundaryChars}|^)(?=${boundaryChars}|$)`);
+                            } else {
+                                processedFind = `${startBoundary}${processedFind}${endBoundary}`;
+                            }
+                        }
+
+                        let replaceValue = rule.replace;
+                        if (typeof replaceValue === 'string') {
+                            const trimmed = replaceValue.trim();
+                            if (trimmed.startsWith('function') || trimmed.startsWith('(')) {
+                                try {
+                                    replaceValue = eval(trimmed);
+                                } catch (error) {
+                                    // Skip this rule if evaluation fails
+                                }
+                            }
+                        }
+
+                        const regex = new RegExp(processedFind, processedFlags);
+
+                        if (typeof replaceValue === 'function') {
+                            processedText = processedText.replace(regex, replaceValue);
+                        } else {
+                            let jsReplacement = replaceValue;
+                            if (typeof jsReplacement === 'string') {
+                                jsReplacement = jsReplacement.replace(/(?<!\\)\\(\d+)/g, '$$$1');
+                            }
+                            processedText = processedText.replace(regex, jsReplacement);
+                        }
+                    } catch (e) {
+                        // Skip this rule if it fails
+                    }
+                });
+                
+                // Reconstruct annotation with processed text and original numbers
+                const reconstructedAnnotation = `[${processedText}](${numbers})`;
+                fixedText = fixedText.replace(placeholder, reconstructedAnnotation);
+            });
         }
 
-        // Convert numbers to text based on setting
-        if (autoFixSettings.numberToText === 'on') {
-            console.log('Converting numbers to text automatically...');
-            fixedText = convertNumbersToText(fixedText);
-        }
-
-        const isNumberConversionInteractive = autoFixSettings.numberToText === 'ask';
 
         if (pendingInteractiveRules.length > 0) {
             pendingInteractiveRules.forEach(rule => {
@@ -9516,29 +12000,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
             processInteractiveFixes(textEditor, interactiveRuleMatches, {
                 onComplete: () => {
-                    if (isNumberConversionInteractive) {
-                        console.log('Interactive number conversion mode...');
-                        setTimeout(() => {
-                            startInteractiveNumberConversion(textEditor);
-                        }, 100);
-                    }
+                    // Interactive fixes complete
                 },
                 onDeclineAll: (remainingMatches) => {
                     console.log('User declined all remaining interactive rule fixes:', remainingMatches.length);
                 }
             });
-
-            if (isNumberConversionInteractive) {
-                return;
-            }
-        }
-
-        if (isNumberConversionInteractive) {
-            applyFixedTextToEditor();
-            console.log('Interactive number conversion mode...');
-            setTimeout(() => {
-                startInteractiveNumberConversion(textEditor);
-            }, 100);
             return;
         }
 
@@ -9656,6 +12123,30 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         }
     }
 
+    // Function to handle keydown events for blocking save shortcuts
+    function handleBlockSaveShortcuts(event) {
+        // Only block if the setting is enabled
+        if (!autoFixSettings.blockSaveShortcuts) {
+            return;
+        }
+
+        // Block Shift+Enter
+        if (event.shiftKey && event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return false;
+        }
+
+        // Block Ctrl+L (or Cmd+L on Mac)
+        if ((event.ctrlKey || event.metaKey) && event.key === 'l') {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return false;
+        }
+    }
+
     // Function to handle keypress events
     function handleKeyPress(event) {
         // Only process if em dash is enabled and it's a dash/hyphen
@@ -9666,11 +12157,11 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         // Check if we're in a lyrics editing context
         const target = event.target;
         const isInEditor = target.closest('[class*="LyricsEdit"]') ||
-                          target.closest('[class*="lyrics-edit"]') ||
-                          target.closest('textarea') ||
-                          target.closest('[contenteditable="true"]') ||
-                          target.matches('textarea') ||
-                          target.matches('[contenteditable="true"]');
+            target.closest('[class*="lyrics-edit"]') ||
+            target.closest('textarea') ||
+            target.closest('[contenteditable="true"]') ||
+            target.matches('textarea') ||
+            target.matches('[contenteditable="true"]');
 
         if (!isInEditor) {
             return;
@@ -9723,7 +12214,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
             padding: 8px;
             display: none;
-            z-index: 10006;
+            z-index: 6;
             font-family: 'HelveticaNeue', Arial, sans-serif;
             gap: 8px;
         `;
@@ -9948,7 +12439,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     // Function to show the formatting popup
     function showFormatPopup(x, y) {
-        console.log('Showing format popup at:', x, y);
+        // console.log('Showing format popup at:', x, y);
 
         if (!formatPopup) {
             console.log('Creating new format popup');
@@ -9962,8 +12453,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         formatPopup.style.top = y + 'px';
         formatPopup.style.display = 'flex';
 
-        console.log('Popup positioned at left:', formatPopup.style.left, 'top:', formatPopup.style.top);
-        console.log('Popup should now be visible');
+        // console.log('Popup positioned at left:', formatPopup.style.left, 'top:', formatPopup.style.top);
+        // console.log('Popup should now be visible');
     }
 
     // Function to hide the formatting popup
@@ -9980,8 +12471,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         // Only work on lyrics editor elements
         const isLyricsEditor = target && target.closest && target.matches &&
-                              target.closest('[class*="LyricsEdit"]') &&
-                              (target.matches('textarea') || target.isContentEditable);
+            target.closest('[class*="LyricsEdit"]') &&
+            (target.matches('textarea') || target.isContentEditable);
 
         if (!isLyricsEditor) {
             return;
@@ -10080,7 +12571,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     }
     // Function to handle text selection
     function handleTextSelection() {
-        console.log('Text selection event triggered');
+        // console.log('Text selection event triggered');
 
         // Only show format popup on lyrics pages
         if (!isOnLyricsPage()) {
@@ -10097,40 +12588,45 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         const selection = window.getSelection();
         const selectedText = selection.toString().trim();
 
-        console.log('Selected text:', selectedText);
-        console.log('Selection range count:', selection.rangeCount);
+        // console.log('Selected text:', selectedText);
+        // console.log('Selection range count:', selection.rangeCount);
 
         // Check if we have selected text, even if ranges are cleared
         if (selectedText && selectedText.length > 0) {
             const activeElement = document.activeElement;
-            console.log('Active element:', activeElement);
-            console.log('Active element tag:', activeElement.tagName);
-            console.log('Active element classes:', activeElement.className);
+            // console.log('Active element:', activeElement);
+            // console.log('Active element tag:', activeElement.tagName);
+            // console.log('Active element classes:', activeElement.className);
 
             const isInEditor = activeElement.closest('[class*="LyricsEdit"]') ||
-                              activeElement.closest('[class*="lyrics-edit"]') ||
-                              activeElement.matches('textarea') ||
-                              activeElement.matches('[contenteditable="true"]') ||
-                              activeElement.isContentEditable;
+                activeElement.closest('[class*="lyrics-edit"]') ||
+                activeElement.matches('textarea') ||
+                activeElement.matches('[contenteditable="true"]') ||
+                activeElement.isContentEditable;
 
-            console.log('Is in editor:', isInEditor);
+            // console.log('Is in editor:', isInEditor);
 
             if (isInEditor) {
                 // Store the selection with position information to handle duplicates
                 let selectionStart = null;
                 let selectionEnd = null;
                 let selectionRange = null;
+                // Use the exact text from the element to avoid newline normalization issues
+                let exactSelectedText = selectedText;
 
                 if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
                     selectionStart = activeElement.selectionStart;
                     selectionEnd = activeElement.selectionEnd;
+                    // Get the exact text from the textarea to preserve \r\n on Windows
+                    // and avoid issues with selection.toString() normalizing newlines
+                    exactSelectedText = activeElement.value.slice(selectionStart, selectionEnd);
                 } else if (activeElement.isContentEditable && selection.rangeCount > 0) {
                     // Store the actual range for contenteditable elements
                     selectionRange = selection.getRangeAt(0).cloneRange();
                 }
 
                 currentSelection = {
-                    text: selectedText,
+                    text: exactSelectedText,
                     activeElement: activeElement,
                     selectionStart: selectionStart,
                     selectionEnd: selectionEnd,
@@ -10142,53 +12638,94 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 const elementRect = activeElement.getBoundingClientRect();
 
                 if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
-                    // For textarea, try to estimate position based on cursor
-                    const cursorPosition = activeElement.selectionStart;
-                    const text = activeElement.value.substring(0, cursorPosition);
-                    const lines = text.split('\n');
-                    const currentLine = lines.length - 1;
-                    const currentColumn = lines[lines.length - 1].length;
-
-                    // Get computed styles for more accurate measurements
+                    // For textarea, use a mirror div to get exact pixel position
+                    // This avoids cumulative line-height calculation errors
+                    const selectionEnd = activeElement.selectionEnd;
+                    
+                    // Create a mirror div that matches the textarea exactly
+                    const mirror = document.createElement('div');
                     const styles = window.getComputedStyle(activeElement);
-                    const lineHeight = parseInt(styles.lineHeight) || 20;
-                    const fontSize = parseInt(styles.fontSize) || 14;
-                    const charWidth = fontSize * 0.6; // approximate character width
-
-                    // Account for padding and scroll
-                    const paddingLeft = parseInt(styles.paddingLeft) || 0;
-                    const paddingTop = parseInt(styles.paddingTop) || 0;
-
-                    x = elementRect.left + paddingLeft + (currentColumn * charWidth);
-                    y = elementRect.top + window.scrollY + paddingTop + (currentLine * lineHeight) + lineHeight + 10;
+                    
+                    // Copy all relevant styles to mirror
+                    const stylesToCopy = [
+                        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+                        'letterSpacing', 'textTransform', 'wordSpacing',
+                        'textIndent', 'whiteSpace', 'wordWrap', 'wordBreak',
+                        'overflowWrap', 'lineHeight', 'paddingTop', 'paddingRight',
+                        'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth',
+                        'borderBottomWidth', 'borderLeftWidth', 'boxSizing', 'width'
+                    ];
+                    
+                    mirror.style.position = 'absolute';
+                    mirror.style.visibility = 'hidden';
+                    mirror.style.pointerEvents = 'none';
+                    mirror.style.left = '-9999px';
+                    mirror.style.top = '0';
+                    mirror.style.overflow = 'hidden';
+                    
+                    stylesToCopy.forEach(prop => {
+                        mirror.style[prop] = styles[prop];
+                    });
+                    
+                    // Get text up to selection end and replace special chars
+                    const textBeforeEnd = activeElement.value.substring(0, selectionEnd);
+                    // Use a span to mark the end position
+                    mirror.innerHTML = textBeforeEnd
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/\n/g, '<br>') + '<span id="__caret_marker"></span>';
+                    
+                    document.body.appendChild(mirror);
+                    
+                    const marker = mirror.querySelector('#__caret_marker');
+                    const markerRect = marker.getBoundingClientRect();
+                    const mirrorRect = mirror.getBoundingClientRect();
+                    
+                    // Calculate position relative to the mirror, then apply to textarea
+                    const relativeTop = markerRect.top - mirrorRect.top;
+                    const relativeLeft = markerRect.left - mirrorRect.left;
+                    
+                    // Account for textarea scroll
+                    const scrollTop = activeElement.scrollTop || 0;
+                    
+                    // Get line height for positioning below the line
+                    const lineHeight = parseFloat(styles.lineHeight) || parseFloat(styles.fontSize) * 1.2 || 20;
+                    
+                    x = elementRect.left + relativeLeft;
+                    // Position 7px below the bottom of the selection line
+                    y = elementRect.top + window.scrollY + relativeTop + lineHeight - scrollTop + 7;
+                    
+                    // Clean up
+                    document.body.removeChild(mirror);
 
                     // Bounds checking
                     x = Math.min(x, elementRect.right - 120); // Don't go past right edge
                     x = Math.max(x, elementRect.left + 10); // Don't go past left edge
 
-                    console.log('Using textarea positioning with cursor estimation');
-                    console.log('Cursor position:', cursorPosition, 'Line:', currentLine, 'Column:', currentColumn);
-                    console.log('LineHeight:', lineHeight, 'CharWidth:', charWidth, 'Padding:', paddingLeft, paddingTop);
+                    console.log('Using textarea mirror positioning');
+                    console.log('RelativeTop:', relativeTop, 'RelativeLeft:', relativeLeft, 'ScrollTop:', scrollTop);
                 } else if (selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
                     const rect = range.getBoundingClientRect();
-                    console.log('Selection rect:', rect);
+                    // console.log('Selection rect:', rect);
 
                     // Check if rect is valid (not all zeros)
                     if (rect.width > 0 && rect.height > 0) {
                         x = rect.left + (rect.width / 2) - 50;
-                        y = rect.top + window.scrollY - 60;
-                        console.log('Using selection rect positioning');
+                        // Position 7px below the bottom of the selection
+                        y = rect.bottom + window.scrollY + 7;
+                        // console.log('Using selection rect positioning');
                     } else {
                         // Fallback to element positioning
                         x = elementRect.left + 20;
-                        y = elementRect.top + window.scrollY - 60;
+                        y = elementRect.bottom + window.scrollY + 7;
                         console.log('Selection rect invalid, using element positioning');
                     }
                 } else {
                     // Fallback: position near the active element
                     x = elementRect.left + 20;
-                    y = elementRect.top + window.scrollY - 60;
+                    y = elementRect.bottom + window.scrollY + 7;
                     console.log('Using fallback element positioning');
                 }
 
@@ -10196,7 +12733,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 x = Math.max(10, x);
                 y = Math.max(10, y);
 
-                console.log('Popup position:', x, y);
+                // console.log('Popup position:', x, y);
 
                 showFormatPopup(x, y);
                 return;
@@ -10217,6 +12754,84 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         return window.location.pathname.endsWith('-lyrics') || window.location.pathname.endsWith('-annotated');
     }
 
+    // Function to fix controls container styles if they're causing layout issues
+    function fixControlsContainerStyles() {
+        const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
+            document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
+            document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
+            document.querySelector('[class*="lyrics-edit"][class*="controls"]');
+        
+        if (!controlsContainer) {
+            return false;
+        }
+        
+        const currentWidth = controlsContainer.style.width;
+        const currentMaxWidth = controlsContainer.style.maxWidth;
+        const computedStyle = window.getComputedStyle(controlsContainer);
+        const actualWidth = controlsContainer.offsetWidth;
+        const parentWidth = controlsContainer.parentElement?.offsetWidth || 0;
+        
+        // Check if width: 130% is causing overflow issues
+        // If the container is significantly wider than its parent, it's likely causing problems
+        const isOverflowing = parentWidth > 0 && actualWidth > parentWidth * 1.2;
+        
+        // Also check if the styles are set but shouldn't be (rare edge case)
+        const hasProblematicStyles = currentWidth === '130%' && currentMaxWidth === 'none';
+        
+        if (hasProblematicStyles && isOverflowing) {
+            console.log('🔧 Fixing controls container styles - width: 130% causing overflow');
+            // Reset to more reasonable values
+            controlsContainer.style.width = '';
+            controlsContainer.style.maxWidth = '';
+            if (controlsContainer.style.flexBasis) {
+                controlsContainer.style.flexBasis = '';
+            }
+            return true;
+        }
+        
+        // Also check for any other problematic width values (>100%)
+        if (currentWidth && currentWidth.includes('%')) {
+            const widthPercent = parseFloat(currentWidth);
+            if (widthPercent > 100 && isOverflowing) {
+                console.log(`🔧 Fixing controls container styles - width: ${currentWidth} causing overflow`);
+                controlsContainer.style.width = '';
+                controlsContainer.style.maxWidth = '';
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    // Function to remove duplicate buttons (cleanup)
+    function removeDuplicateButtons() {
+        const buttonIds = ['genius-emdash-toggle', 'genius-autofix-button', 'genius-autoscribe-button', 'genius-aifix-button', 'genius-zws-button', 'genius-find-replace-container'];
+        
+        buttonIds.forEach(id => {
+            const buttons = document.querySelectorAll(`#${id}`);
+            if (buttons.length > 1) {
+                console.log(`⚠️ Found ${buttons.length} instances of ${id}, removing duplicates...`);
+                // Keep the first one, remove the rest
+                for (let i = 1; i < buttons.length; i++) {
+                    const container = buttons[i].closest('[style*="display: flex"][style*="flex-direction: row"]');
+                    if (container && container.parentNode) {
+                        // Check if container only has our buttons (no other content)
+                        const hasOnlyOurButtons = Array.from(container.children).every(child => 
+                            buttonIds.some(bid => child.id === bid || child.querySelector(`#${bid}`))
+                        );
+                        if (hasOnlyOurButtons) {
+                            container.remove();
+                        } else {
+                            buttons[i].remove();
+                        }
+                    } else {
+                        buttons[i].remove();
+                    }
+                }
+            }
+        });
+    }
+
     // Function to add buttons to lyrics editor
     function addButtonToEditor() {
         // Only add buttons on lyrics pages
@@ -10224,103 +12839,257 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             console.log('Not on a lyrics page, skipping button addition');
             return false;
         }
-        // Check if buttons already exist - if so, don't add them again
+
+        // Check if buttons already exist in DOM - verify they're actually attached
         const existingToggleButton = document.getElementById('genius-emdash-toggle');
         const existingAutoFixButton = document.getElementById('genius-autofix-button');
         const existingAutoscribeButton = document.getElementById('genius-autoscribe-button');
+        const existingAIFixButton = document.getElementById('genius-aifix-button');
         const existingZwsButton = document.getElementById('genius-zws-button');
         const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
 
-        if (existingToggleButton || existingAutoFixButton || existingAutoscribeButton || existingZwsButton || existingFindReplaceContainer) {
-            console.log('Buttons already exist, skipping addition');
+        // Check if any button exists AND is actually in the DOM (not just created)
+        const hasExistingButtons = (existingToggleButton && existingToggleButton.isConnected) ||
+            (existingAutoFixButton && existingAutoFixButton.isConnected) ||
+            (existingAutoscribeButton && existingAutoscribeButton.isConnected) ||
+            (existingAIFixButton && existingAIFixButton.isConnected) ||
+            (existingZwsButton && existingZwsButton.isConnected) ||
+            (existingFindReplaceContainer && existingFindReplaceContainer.isConnected);
+
+        if (hasExistingButtons) {
+            console.log('Buttons already exist in DOM, skipping addition');
+            // Clean up any duplicates that might have been created
+            removeDuplicateButtons();
+            return false;
+        }
+        
+        // Prevent multiple simultaneous calls, but allow if buttons don't actually exist (handles stuck flag case)
+        if (isAddingButtons) {
+            console.log('Button addition already in progress, skipping duplicate call');
             return false;
         }
 
         // Look for the lyrics editor controls container (try multiple approaches)
         const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
-                                 document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
-                                 document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
-                                 document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
-                                 document.querySelector('.ihioQH'); // backup class name from the HTML
+            document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
+            document.querySelector('[class*="LyricsEdit"][class*="Controls"]') ||
+            document.querySelector('[class*="lyrics-edit"][class*="controls"]') ||
+            document.querySelector('.ihioQH'); // backup class name from the HTML
 
         if (controlsContainer) {
             console.log('Found controls container:', controlsContainer);
 
-            // Expand the controls container to use available space better
-            controlsContainer.style.maxWidth = 'none';
-            controlsContainer.style.width = '130%';
-            if (controlsContainer.style.flexBasis) {
-                controlsContainer.style.flexBasis = 'auto';
+            // Set flag to prevent duplicate calls
+            isAddingButtons = true;
+            
+            // Safety timeout: reset flag if it gets stuck (5 seconds)
+            const safetyTimeout = setTimeout(() => {
+                if (isAddingButtons) {
+                    console.warn('⚠️ Button addition flag was stuck, resetting...');
+                    isAddingButtons = false;
+                }
+            }, 5000);
+
+            // Helper function to clean up and reset flag
+            const cleanupAndReset = () => {
+                clearTimeout(safetyTimeout);
+                isAddingButtons = false;
+            };
+
+            let autoscribeButton, aifixButton, zwsButton, findReplaceContainer;
+            let mainButtonContainer, aiButtonContainer, smallButtonsContainer;
+
+            try {
+                // Expand the controls container to use available space better
+                // But check first if it would cause issues
+                const parentWidth = controlsContainer.parentElement?.offsetWidth || 0;
+                const shouldUseWideLayout = parentWidth > 800; // Only use wide layout on larger screens
+                
+                if (shouldUseWideLayout) {
+                    controlsContainer.style.maxWidth = 'none';
+                    controlsContainer.style.width = '130%';
+                    if (controlsContainer.style.flexBasis) {
+                        controlsContainer.style.flexBasis = 'auto';
+                    }
+                    
+                    // Verify the styles don't cause overflow after a brief delay
+                    setTimeout(() => {
+                        fixControlsContainerStyles();
+                    }, 100);
+                } else {
+                    // On smaller screens, use more conservative styling
+                    controlsContainer.style.maxWidth = '';
+                    controlsContainer.style.width = '';
+                }
+
+                // Create all buttons
+                console.log('Creating toggle button...');
+                toggleButton = createToggleButton();
+                console.log('Creating autofix button...');
+                autoFixButton = createAutoFixButton();
+                console.log('Creating autoscribe button...');
+                autoscribeButton = createAutoscribeButton();
+                console.log('Creating AI fix button...');
+                aifixButton = createAIFixButton();
+                console.log('Creating ZWS button...');
+                zwsButton = createZeroWidthSpaceButton();
+                console.log('Creating find/replace container...');
+                findReplaceContainer = createFindReplaceContainer();
+
+                // Create containers using utility
+                mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
+                mainButtonContainer.appendChild(toggleButton);
+                mainButtonContainer.appendChild(autoFixButton);
+
+                aiButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
+                aiButtonContainer.appendChild(autoscribeButton);
+                aiButtonContainer.appendChild(aifixButton);
+                smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', {
+                    marginBottom: '0.5rem',
+                    flexWrap: 'wrap',
+                    minWidth: '0'
+                });
+                smallButtonsContainer.appendChild(zwsButton);
+                smallButtonsContainer.appendChild(findReplaceContainer);
+                
+                console.log('All buttons created successfully');
+            } catch (creationError) {
+                console.error('❌ Error creating buttons:', creationError);
+                cleanupAndReset();
+                return false;
             }
 
-            // Create all buttons
-            toggleButton = createToggleButton();
-            autoFixButton = createAutoFixButton();
-            const autoscribeButton = createAutoscribeButton();
-            const zwsButton = createZeroWidthSpaceButton();
-            const findReplaceContainer = createFindReplaceContainer();
+            // Insert buttons immediately (reduced delay for faster loading)
+            // Use requestAnimationFrame to ensure DOM is ready, but much faster than setTimeout
+            requestAnimationFrame(() => {
+                try {
+                    // Double-check buttons don't already exist (race condition protection)
+                    if (document.getElementById('genius-emdash-toggle') && document.getElementById('genius-emdash-toggle') !== toggleButton) {
+                        console.log('Buttons were added by another call, cleaning up duplicates...');
+                        mainButtonContainer.remove();
+                        aiButtonContainer.remove();
+                        smallButtonsContainer.remove();
+                        cleanupAndReset();
+                        removeDuplicateButtons();
+                        return;
+                    }
 
-            // Create containers using utility
-            const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
-            mainButtonContainer.appendChild(toggleButton);
-            mainButtonContainer.appendChild(autoFixButton);
-            mainButtonContainer.appendChild(autoscribeButton);
+                    // Insert buttons: Below Cancel/Save buttons, above lyricsSectionsButtonsContainer or LyricsEditExplainer__Container
+                    console.log('Finding insertion point: below Cancel/Save, above lyricsSectionsButtonsContainer or LyricsEditExplainer...');
+                    
+                    // Find what should come AFTER our buttons (direct children only)
+                    let insertBeforeNode = null;
+                    
+                    // 1. First priority: lyricsSectionsButtonsContainer (if it exists and is a direct child)
+                    const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
+                    if (lyricsSectionsContainer && lyricsSectionsContainer.parentNode === controlsContainer) {
+                        insertBeforeNode = lyricsSectionsContainer;
+                        console.log('Found lyricsSectionsButtonsContainer as insertion reference');
+                    }
+                    
+                    // 2. Second priority: LyricsEditExplainer__Container (if lyricsSectionsContainer not found)
+                    if (!insertBeforeNode) {
+                        const lyricsExplainer = Array.from(controlsContainer.children).find(child => {
+                            const classList = Array.from(child.classList || []);
+                            return classList.some(cls => cls.includes('LyricsEditExplainer'));
+                        });
+                        if (lyricsExplainer) {
+                            insertBeforeNode = lyricsExplainer;
+                            console.log('Found LyricsEditExplainer__Container as insertion reference');
+                        }
+                    }
+                    
+                    // Find Cancel/Save buttons container (direct child)
+                    const cancelSaveContainer = Array.from(controlsContainer.children).find(child => {
+                        const text = child.textContent || '';
+                        return (text.includes('Cancel') || text.includes('Save')) && 
+                               child.querySelector && child.querySelector('button');
+                    });
+                    
+                    if (cancelSaveContainer) {
+                        console.log('Found Cancel/Save buttons container');
+                        
+                        // Insert AFTER Cancel/Save buttons but BEFORE the reference node
+                        if (insertBeforeNode) {
+                            // Insert before the reference node (which comes after Cancel/Save)
+                            controlsContainer.insertBefore(smallButtonsContainer, insertBeforeNode);
+                            controlsContainer.insertBefore(aiButtonContainer, smallButtonsContainer);
+                            controlsContainer.insertBefore(mainButtonContainer, aiButtonContainer);
+                            console.log('Inserted buttons after Cancel/Save, before reference node');
+                        } else {
+                            // No reference node found, insert right after Cancel/Save buttons
+                            const nextSibling = cancelSaveContainer.nextSibling;
+                            if (nextSibling) {
+                                controlsContainer.insertBefore(mainButtonContainer, nextSibling);
+                                controlsContainer.insertBefore(aiButtonContainer, mainButtonContainer.nextSibling);
+                                controlsContainer.insertBefore(smallButtonsContainer, aiButtonContainer.nextSibling);
+                                console.log('Inserted buttons after Cancel/Save buttons');
+                            } else {
+                                // Cancel/Save is last, append our buttons
+                                controlsContainer.appendChild(mainButtonContainer);
+                                controlsContainer.appendChild(aiButtonContainer);
+                                controlsContainer.appendChild(smallButtonsContainer);
+                                console.log('Appended buttons after Cancel/Save (last element)');
+                            }
+                        }
+                    } else if (insertBeforeNode) {
+                        // No Cancel/Save found, but we have a reference node - insert before it
+                        controlsContainer.insertBefore(smallButtonsContainer, insertBeforeNode);
+                        controlsContainer.insertBefore(aiButtonContainer, smallButtonsContainer);
+                        controlsContainer.insertBefore(mainButtonContainer, aiButtonContainer);
+                        console.log('Inserted buttons before reference node (no Cancel/Save found)');
+                    } else {
+                        // Fallback: prepend to container
+                        if (controlsContainer.firstChild) {
+                            controlsContainer.insertBefore(mainButtonContainer, controlsContainer.firstChild);
+                            controlsContainer.insertBefore(aiButtonContainer, mainButtonContainer.nextSibling);
+                            controlsContainer.insertBefore(smallButtonsContainer, aiButtonContainer.nextSibling);
+                            console.log('Prepended buttons (no reference points found)');
+                        } else {
+                            controlsContainer.appendChild(mainButtonContainer);
+                            controlsContainer.appendChild(aiButtonContainer);
+                            controlsContainer.appendChild(smallButtonsContainer);
+                            console.log('Appended buttons to empty container');
+                        }
+                    }
+                    
+                    // Verify buttons are actually in the DOM
+                    if (!mainButtonContainer.isConnected) {
+                        console.error('❌ Buttons failed to attach to DOM!');
+                        throw new Error('Button insertion failed - not connected to DOM');
+                    }
 
-            const smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', {
-                marginBottom: '0.5rem',
-                flexWrap: 'wrap',
-                minWidth: '0'
-            });
-            smallButtonsContainer.appendChild(zwsButton);
-            smallButtonsContainer.appendChild(findReplaceContainer);
-
-            // Wait for other extension to potentially create its buttons
-            setTimeout(() => {
-                // Check for other extension's lyrics sections buttons container
-                const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
-
-                // Look for the LyricsEditExplainer container (don't remove it, let other extensions use it)
-                const lyricsExplainer = controlsContainer.querySelector('[class*="LyricsEditExplainer__Container"]') ||
-                                       controlsContainer.querySelector('[class*="LyricsEditExplainer"]');
-
-                // Look for the "How to Format Lyrics" section as a fallback
-                const formatExplainer = controlsContainer.querySelector('[class*="LyricsEdit-desktop__Explainer"]') ||
-                                       controlsContainer.querySelector('[class*="Explainer"]');
-
-                if (lyricsSectionsContainer) {
-                    // If other extension's buttons exist, insert our buttons BEFORE them
-                    console.log('Found other extension lyrics sections container, positioning our buttons above it');
-
-                    // Insert before the other extension's container
-                    lyricsSectionsContainer.parentNode.insertBefore(mainButtonContainer, lyricsSectionsContainer);
-                    lyricsSectionsContainer.parentNode.insertBefore(smallButtonsContainer, lyricsSectionsContainer);
-                    console.log('Inserted ScribeTools buttons before other extension buttons');
-
-                } else if (lyricsExplainer && controlsContainer.contains(lyricsExplainer)) {
-                    // Insert before the LyricsEditExplainer (only if it's a child of controlsContainer)
-                    controlsContainer.insertBefore(mainButtonContainer, lyricsExplainer);
-                    controlsContainer.insertBefore(smallButtonsContainer, lyricsExplainer);
-                    console.log('Inserted buttons before LyricsEditExplainer');
-
-                } else if (formatExplainer && controlsContainer.contains(formatExplainer) && formatExplainer.textContent && formatExplainer.textContent.includes('Format')) {
-                    // Insert before the format explainer (above "How to Format Lyrics:")
-                    controlsContainer.insertBefore(mainButtonContainer, formatExplainer);
-                    controlsContainer.insertBefore(smallButtonsContainer, formatExplainer);
-                    console.log('Inserted buttons before format explainer');
-
-                } else {
-                    // Fallback: append to the container
-                    controlsContainer.appendChild(mainButtonContainer);
-                    controlsContainer.appendChild(smallButtonsContainer);
-                    console.log('Appended buttons to controls container');
+                    // Clear flag and update state
+                    cleanupAndReset();
+                    updateButtonState();
+                    applyCustomEditorSetting();
+                    
+                    // Verify container styles are correct after insertion
+                    setTimeout(() => {
+                        fixControlsContainerStyles();
+                        // Set up style observer to watch for future style changes
+                        setupStyleObserver();
+                    }, 200);
+                    
+                    console.log('✅ Genius Em Dash Toggle and Auto Fix buttons added to editor');
+                } catch (error) {
+                    console.error('❌ Error adding buttons:', error);
+                    cleanupAndReset();
+                    // Clean up any partially created containers
+                    try {
+                        if (mainButtonContainer.parentNode) mainButtonContainer.remove();
+                        if (aiButtonContainer.parentNode) aiButtonContainer.remove();
+                        if (smallButtonsContainer.parentNode) smallButtonsContainer.remove();
+                    } catch (cleanupError) {
+                        console.error('Error during cleanup:', cleanupError);
+                    }
                 }
-            }, 500); // Give other extension time to create its buttons
+            });
 
-            updateButtonState();
-            console.log('Genius Em Dash Toggle and Auto Fix buttons added to editor');
             return true;
         } else {
-            console.log('Controls container not found');
+            console.log('❌ Controls container not found');
+            isAddingButtons = false; // Clear flag on error
         }
         return false;
     }
@@ -10356,7 +13125,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     // Function to remove hidden buttons with specific styling
     function removeHiddenButtons() {
-        const buttons = document.querySelectorAll('button');
+        // First, try to scope to lyricsSectionsButtonsContainer if it exists
+        const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
+        const buttons = lyricsSectionsContainer 
+            ? lyricsSectionsContainer.querySelectorAll('button')
+            : document.querySelectorAll('button');
+        
         buttons.forEach(button => {
             const style = button.getAttribute('style');
             if (style) {
@@ -10366,8 +13140,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 const hasAlignCenter = style.includes('align-items: center') || style.includes('align-items:center');
                 const hasJustifyCenter = style.includes('justify-content: center') || style.includes('justify-content:center');
                 const hasVisibilityHidden = style.includes('visibility: hidden') || style.includes('visibility:hidden');
-                
-                if (hasWidth95 && hasDisplayFlex && hasAlignCenter && hasJustifyCenter && hasVisibilityHidden) {
+
+                // Also check computed style in case visibility is set via CSS
+                const computedStyle = window.getComputedStyle(button);
+                const isVisibilityHidden = hasVisibilityHidden || computedStyle.visibility === 'hidden';
+
+                if (hasWidth95 && hasDisplayFlex && hasAlignCenter && hasJustifyCenter && isVisibilityHidden) {
                     console.log('Removing hidden button with specific styling');
                     button.remove();
                 }
@@ -10377,13 +13155,18 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     // Function to initialize the userscript
     function init() {
+        console.log('🔧 ScribeTools init() called');
+        console.log('🔧 Current URL:', window.location.href);
+        console.log('🔧 isInitialized:', isInitialized);
+
         // Only run on Genius pages
         if (!window.location.hostname.includes('genius.com') || isInitialized) {
+            console.log('🔧 Init aborted - not on Genius or already initialized');
             return;
         }
 
         // Immediate cleanup of any lingering highlights from previous sessions
-        console.log('Initializing: cleaning up any existing highlights...');
+        console.log('✅ Initializing: cleaning up any existing highlights...');
         removeInteractiveHighlight(null);
 
         // Remove the "How to Format Lyrics" explainer div
@@ -10397,16 +13180,39 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             removeFormatExplainerDiv();
             removeHiddenButtons();
         });
-        observer.observe(document.body, { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+        
+        // Also set up a more targeted observer for lyricsSectionsButtonsContainer when it exists
+        const setupContainerObserver = () => {
+            const lyricsSectionsContainer = document.getElementById('lyricsSectionsButtonsContainer');
+            if (lyricsSectionsContainer) {
+                const containerObserver = new MutationObserver(() => {
+                    removeHiddenButtons();
+                });
+                containerObserver.observe(lyricsSectionsContainer, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] });
+                return containerObserver;
+            }
+            return null;
+        };
+        
+        // Set up container observer immediately if container exists
+        setupContainerObserver();
+        
+        // Also watch for the container to be created
+        const containerWatcher = new MutationObserver(() => {
+            const container = document.getElementById('lyricsSectionsButtonsContainer');
+            if (container && !container._scribeToolsObserved) {
+                container._scribeToolsObserved = true;
+                setupContainerObserver();
+            }
+        });
+        containerWatcher.observe(document.body, { childList: true, subtree: true });
 
         // Reset restore prompt flag for new page
         restorePromptShownForContext.clear();
 
-        // Load declined numbers from localStorage (per page, expires after 1 week)
-        declinedNumbers.clear();
-        loadDeclinedNumbers();
-
-                 // Add global event listeners (only once)
+        // Add global event listeners (only once)
+        document.addEventListener('keydown', handleBlockSaveShortcuts, true); // Use capture phase to intercept early
         document.addEventListener('keypress', handleKeyPress);
         document.addEventListener('selectionchange', handleTextSelection);
         document.addEventListener('mouseup', () => {
@@ -10435,6 +13241,13 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             lastFocusedContextKey = context.key;
 
             if (context.type === 'lyrics') {
+                if (autoFixSettings.useCustomEditor && target.tagName === 'TEXTAREA') {
+                    ensureCustomEditorOverlay(target);
+                    updateCustomEditorOverlay(target);
+                } else if (!autoFixSettings.useCustomEditor && target._customEditorActive) {
+                    disableCustomEditor(target);
+                }
+
                 // Only remove highlights if there's no active autofix popup
                 if (!currentInteractivePopup) {
                     console.log('Cleaning up any lingering highlights on lyrics editor focus...');
@@ -10490,9 +13303,9 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
             // Clean up number conversion popup before leaving
             if (currentNumberConversion) {
                 const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                                  document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
-                                  document.querySelector('textarea') ||
-                                  document.querySelector('[contenteditable="true"]');
+                    document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]') ||
+                    document.querySelector('textarea') ||
+                    document.querySelector('[contenteditable="true"]');
                 if (textEditor) {
                     removeInteractiveHighlight(textEditor);
                 }
@@ -10534,10 +13347,12 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
         console.log('Event listeners added for text formatting');
 
-                 // Load saved settings
+        // Load saved settings
         loadSettings();
         loadAutoscribeSettings();
-        
+
+        applyCustomEditorSetting();
+
         // Load built-in rules from rules.json
         loadBuiltInRules();
 
@@ -10551,11 +13366,44 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
         startAutoSave();
 
         isInitialized = true;
+        console.log('✅ Init completed, isInitialized set to true');
 
-        // Wait for other extensions to initialize first, then try to add button to editor
-        setTimeout(() => {
-            const buttonAdded = addButtonToEditor();
-        }, 1000); // Give other extensions time to load
+        // Try to add buttons to editor after React has likely finished rendering
+        // Use multiple attempts with increasing delays to handle dynamic content
+        if (isOnLyricsPage()) {
+            const tryAddButtons = (attempt = 1) => {
+                if (document.getElementById('genius-emdash-toggle')?.isConnected) {
+                    console.log('🔧 Buttons already exist, skipping attempt', attempt);
+                    return;
+                }
+                
+                console.log(`🔧 Attempting to add buttons (attempt ${attempt})...`);
+                const buttonAdded = addButtonToEditor();
+                console.log(`🔧 Button added result (attempt ${attempt}):`, buttonAdded);
+                
+                // Verify buttons actually appeared
+                setTimeout(() => {
+                    const buttonsExist = document.getElementById('genius-emdash-toggle')?.isConnected;
+                    if (!buttonsExist && attempt < 5) {
+                        console.log(`🔧 Buttons not found after attempt ${attempt}, retrying...`);
+                        tryAddButtons(attempt + 1);
+                    } else if (!buttonsExist) {
+                        console.warn('🔧 Failed to add buttons after 5 attempts');
+                    }
+                }, 500);
+            };
+            
+            // Initial attempt after a short delay for React to settle
+            setTimeout(() => tryAddButtons(1), 200);
+            
+            // Additional attempt after longer delay in case of slow loading
+            setTimeout(() => {
+                if (!document.getElementById('genius-emdash-toggle')?.isConnected) {
+                    console.log('🔧 Late attempt to add buttons...');
+                    addButtonToEditor();
+                }
+            }, 2000);
+        }
 
         // If that failed, try multiple fallback searches (but only on lyrics pages and don't interfere with other extensions)
         if (false && !buttonAdded && isOnLyricsPage()) { // Temporarily disabled to prevent interference
@@ -10564,8 +13412,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
                 // Try multiple possible containers with more specific selectors
                 let targetContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
-                                    document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
-                                    document.querySelector('[class*="LyricsEdit"][class*="Controls"]');
+                    document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
+                    document.querySelector('[class*="LyricsEdit"][class*="Controls"]');
 
                 // If still not found, look for any element that contains buttons (likely a controls area)
                 if (!targetContainer) {
@@ -10583,15 +13431,32 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
                 if (targetContainer) {
                     // Expand the container to use available space better
-                    targetContainer.style.maxWidth = 'none';
-                    targetContainer.style.width = '130%';
-                    if (targetContainer.style.flexBasis) {
-                        targetContainer.style.flexBasis = 'auto';
+                    // But check first if it would cause issues
+                    const parentWidth = targetContainer.parentElement?.offsetWidth || 0;
+                    const shouldUseWideLayout = parentWidth > 800; // Only use wide layout on larger screens
+                    
+                    if (shouldUseWideLayout) {
+                        targetContainer.style.maxWidth = 'none';
+                        targetContainer.style.width = '130%';
+                        if (targetContainer.style.flexBasis) {
+                            targetContainer.style.flexBasis = 'auto';
+                        }
+                        
+                        // Verify the styles don't cause overflow after a brief delay
+                        setTimeout(() => {
+                            fixControlsContainerStyles();
+                            setupStyleObserver();
+                        }, 100);
+                    } else {
+                        // On smaller screens, use more conservative styling
+                        targetContainer.style.maxWidth = '';
+                        targetContainer.style.width = '';
                     }
                     // Clean up any orphaned buttons (shouldn't happen with new check, but just in case)
                     const existingToggle = document.getElementById('genius-emdash-toggle');
                     const existingAutoFix = document.getElementById('genius-autofix-button');
                     const existingAutoscribe = document.getElementById('genius-autoscribe-button');
+                    const existingAIFix = document.getElementById('genius-aifix-button');
                     const existingZws = document.getElementById('genius-zws-button');
                     const existingFindReplaceContainer = document.getElementById('genius-find-replace-container');
 
@@ -10599,6 +13464,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     if (existingToggle && !existingToggle.parentNode) existingToggle.remove();
                     if (existingAutoFix && !existingAutoFix.parentNode) existingAutoFix.remove();
                     if (existingAutoscribe && !existingAutoscribe.parentNode) existingAutoscribe.remove();
+                    if (existingAIFix && !existingAIFix.parentNode) existingAIFix.remove();
                     if (existingZws && !existingZws.parentNode) existingZws.remove();
                     if (existingFindReplaceContainer && !existingFindReplaceContainer.parentNode) existingFindReplaceContainer.remove();
 
@@ -10606,6 +13472,7 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     toggleButton = createToggleButton();
                     autoFixButton = createAutoFixButton();
                     const autoscribeButton = createAutoscribeButton();
+                    const aifixButton = createAIFixButton();
                     const zwsButton = createZeroWidthSpaceButton();
                     const findReplaceContainer = createFindReplaceContainer();
 
@@ -10613,7 +13480,10 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     const mainButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
                     mainButtonContainer.appendChild(toggleButton);
                     mainButtonContainer.appendChild(autoFixButton);
-                    mainButtonContainer.appendChild(autoscribeButton);
+
+                    const aiButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
+                    aiButtonContainer.appendChild(autoscribeButton);
+                    aiButtonContainer.appendChild(aifixButton);
 
                     const smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', {
                         marginBottom: '0.5rem',
@@ -10626,9 +13496,11 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     // Try to insert at the top of the container
                     if (targetContainer.firstChild) {
                         targetContainer.insertBefore(mainButtonContainer, targetContainer.firstChild);
-                        targetContainer.insertBefore(smallButtonsContainer, targetContainer.firstChild.nextSibling);
+                        targetContainer.insertBefore(aiButtonContainer, targetContainer.firstChild.nextSibling);
+                        targetContainer.insertBefore(smallButtonsContainer, targetContainer.firstChild.nextSibling.nextSibling);
                     } else {
                         targetContainer.appendChild(mainButtonContainer);
+                        targetContainer.appendChild(aiButtonContainer);
                         targetContainer.appendChild(smallButtonsContainer);
                     }
 
@@ -10644,8 +13516,8 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
     }
     // Function to handle dynamic content loading (for SPAs)
     function observePageChanges() {
-        const observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
+        const observer = new MutationObserver(function (mutations) {
+            mutations.forEach(function (mutation) {
                 if (mutation.type === 'childList') {
                     // Check if lyrics editing elements were added
                     const addedNodes = Array.from(mutation.addedNodes);
@@ -10659,22 +13531,29 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                     );
 
                     // Only try to add buttons if editor appeared, we're on a lyrics page, and we don't already have them
-                    if (hasLyricsEditor && isOnLyricsPage() && !document.getElementById('genius-emdash-toggle') && !document.getElementById('genius-autoscribe-button') && !document.getElementById('genius-zws-button')) {
+                    if (hasLyricsEditor && isOnLyricsPage() && !document.getElementById('genius-emdash-toggle') && !document.getElementById('genius-autoscribe-button') && !document.getElementById('genius-aifix-button') && !document.getElementById('genius-zws-button')) {
                         // Small delay to ensure the editor is fully rendered
                         // Immediate cleanup
                         console.log('Lyrics editor appeared, immediately cleaning up any lingering highlights...');
                         removeInteractiveHighlight(null); // Global cleanup first
 
+                        // Reduced delay for faster button loading
                         setTimeout(() => {
                             addButtonToEditor();
+                            applyCustomEditorSetting();
+                            
+                            // Set up style observer after editor appears
+                            setTimeout(() => {
+                                setupStyleObserver();
+                            }, 500);
 
                             // Additional cleanup after buttons are added
                             const textEditor = document.querySelector('[class*="LyricsEdit"] textarea') ||
-                                              document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
+                                document.querySelector('[class*="LyricsEdit"] [contenteditable="true"]');
                             if (textEditor) {
                                 removeInteractiveHighlight(textEditor);
                             }
-                        }, 1200); // Longer delay to wait for other extensions
+                        }, 300); // Reduced delay for faster loading
                     }
                 }
             });
@@ -10697,5 +13576,80 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
 
     // Also observe for dynamic content
     observePageChanges();
+
+    // Set up MutationObserver to watch for style changes on controls container
+    let styleObserver = null;
+    function setupStyleObserver() {
+        // Clean up existing observer if any
+        if (styleObserver) {
+            styleObserver.disconnect();
+        }
+        
+        const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
+            document.querySelector('[class*="LyricsEdit-desktop__Controls"]') ||
+            document.querySelector('[class*="LyricsEdit"][class*="Controls"]');
+        
+        if (controlsContainer && !styleObserver) {
+            styleObserver = new MutationObserver((mutations) => {
+                let shouldFix = false;
+                mutations.forEach((mutation) => {
+                    if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                        const target = mutation.target;
+                        const width = target.style.width;
+                        const maxWidth = target.style.maxWidth;
+                        
+                        // Check if problematic styles were set
+                        if (width === '130%' && maxWidth === 'none') {
+                            const parentWidth = target.parentElement?.offsetWidth || 0;
+                            const actualWidth = target.offsetWidth;
+                            // If causing overflow, fix it
+                            if (parentWidth > 0 && actualWidth > parentWidth * 1.2) {
+                                shouldFix = true;
+                            }
+                        }
+                    }
+                });
+                
+                if (shouldFix) {
+                    // Debounce the fix to avoid excessive calls
+                    clearTimeout(window._styleFixTimeout);
+                    window._styleFixTimeout = setTimeout(() => {
+                        fixControlsContainerStyles();
+                    }, 100);
+                }
+            });
+            
+            styleObserver.observe(controlsContainer, {
+                attributes: true,
+                attributeFilter: ['style'],
+                subtree: false
+            });
+            
+            console.log('🔍 Style observer set up for controls container');
+        }
+    }
+
+    // Periodic check to re-add buttons if they disappear (React can remove them during re-renders)
+    // Also fixes container styles if they're causing layout issues
+    setInterval(() => {
+        if (isOnLyricsPage() && !isAddingButtons) {
+            const controlsContainer = document.querySelector('[class*="LyricsEdit-desktop__Controls-sc-"]') ||
+                document.querySelector('[class*="LyricsEdit-desktop__Controls"]');
+            const hasButtons = document.getElementById('genius-emdash-toggle')?.isConnected;
+            
+            // Set up style observer if container exists but observer isn't set up
+            if (controlsContainer && !styleObserver) {
+                setupStyleObserver();
+            }
+            
+            // First, check and fix container styles if needed
+            fixControlsContainerStyles();
+            
+            if (controlsContainer && !hasButtons) {
+                console.log('🔄 Buttons missing but editor present, re-adding...');
+                addButtonToEditor();
+            }
+        }
+    }, 2000);
 
 })();
