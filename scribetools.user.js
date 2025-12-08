@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Genius ScribeTools
 // @namespace    http://tampermonkey.net/
-// @version      4.21
+// @version      5.0
 // @description  Helpful tools for editing lyrics on Genius
 // @author       zilla
 // @match        https://genius.com/*
@@ -20,7 +20,7 @@
         return;
     }
 
-    console.log('🔧 Genius ScribeTools v4.21 loading...');
+    console.log('🔧 Genius ScribeTools v5.0 loading...');
 
     let emDashEnabled = false;
     let toggleButton = null;
@@ -41,6 +41,8 @@
     const autoSaveInputTimeouts = new Map();
     let lastFocusedContextKey = null;
     let isEditing = false;
+    let aiButtonsVisible = false; // window.ai()
+    let aiButtonContainer = null;
 
     // Auto fix settings - default all enabled
     let autoFixSettings = {
@@ -4517,6 +4519,53 @@
         }
     }
 
+    // Load AI buttons visibility preference
+    function loadAIButtonsVisibility() {
+        try {
+            const saved = localStorage.getItem('genius-ai-buttons-visible');
+            if (saved !== null) {
+                aiButtonsVisible = saved === 'true';
+            }
+        } catch (error) {
+            console.error('Failed to load AI buttons visibility:', error);
+        }
+    }
+
+    // Save AI buttons visibility preference
+    function saveAIButtonsVisibility() {
+        try {
+            localStorage.setItem('genius-ai-buttons-visible', aiButtonsVisible.toString());
+        } catch (error) {
+            console.error('Failed to save AI buttons visibility:', error);
+        }
+    }
+
+    // Toggle AI buttons visibility
+    function toggleAIButtonsVisibility() {
+        aiButtonsVisible = !aiButtonsVisible;
+        saveAIButtonsVisibility();
+        updateAIButtonsVisibility();
+        console.log('AI buttons visibility:', aiButtonsVisible ? 'shown' : 'hidden');
+    }
+
+    // Set up console command for toggling AI buttons
+    function setupAIConsoleCommand() {
+        // Create a global function that can be called from console by typing "ai"
+        // When user types "ai" in console and presses Enter, it will call this function
+        window.ai = function() {
+            toggleAIButtonsVisibility();
+        };
+    }
+
+    // Update AI buttons visibility based on preference
+    function updateAIButtonsVisibility() {
+        const container = window.aiButtonContainer || document.getElementById('genius-ai-button-container');
+        if (container) {
+            container.style.display = aiButtonsVisible ? 'flex' : 'none';
+            window.aiButtonContainer = container; // Update global reference
+        }
+    }
+
     function saveSettings() {
         try {
             // Create a copy for serialization, converting functions to strings
@@ -4657,7 +4706,7 @@
     // Function to load built-in rules from rules.json
     async function loadBuiltInRules() {
         try {
-            const response = await fetch('https://raw.githubusercontent.com/ziIIas/scribetools/refs/heads/main/rules.json');
+            const response = await fetch('https://raw.githubusercontent.com/ziIIas/scribetools/refs/heads/dev2/rules.json');
             if (!response.ok) {
                 console.error('Failed to fetch built-in rules:', response.status);
                 return;
@@ -4685,19 +4734,103 @@
                     autoFixSettings.ruleGroups = [];
                 }
 
+                // Get the metadata title from remote rules (e.g., "zilla's Rules")
+                const remoteMetadataTitle = data.metadata?.title;
+
+                // Collect IDs of remote rule groups to know which ones to replace
+                const remoteGroupIds = new Set(data.ruleGroups.map(g => g.id));
+
+                // Create a map to preserve user settings (askMode, enabled) from local rules
+                // Key: rule identifier (group.id + rule.find + rule.replace), Value: { askMode, enabled }
+                const preservedRuleSettings = new Map();
+                
+                // Create a map to preserve group-level enabled state
+                // Key: group.id, Value: group.enabled
+                const preservedGroupEnabled = new Map();
+
+                // Always preserve user settings from existing local groups that will be replaced
+                // This ensures user preferences are maintained when groups are updated
+                autoFixSettings.ruleGroups.forEach(localGroup => {
+                    if (remoteGroupIds.has(localGroup.id)) {
+                        // Preserve group-level enabled state
+                        preservedGroupEnabled.set(localGroup.id, localGroup.enabled);
+                        
+                        // Preserve individual rule settings
+                        if (localGroup.rules) {
+                            localGroup.rules.forEach(localRule => {
+                                if (localRule.find && localRule.replace) {
+                                    const ruleKey = `${localGroup.id}|${localRule.find}|${localRule.replace}`;
+                                    preservedRuleSettings.set(ruleKey, {
+                                        askMode: localRule.askMode,
+                                        enabled: localRule.enabled
+                                    });
+                                }
+                            });
+                        }
+                    }
+                });
+
+                // Check if any local rule group has the same title as the remote metadata title
+                // If so, remove all local groups that match remote group IDs (they belong to this supergroup)
+                if (remoteMetadataTitle) {
+                    const matchingLocalGroups = autoFixSettings.ruleGroups.filter(g => g.title === remoteMetadataTitle);
+                    if (matchingLocalGroups.length > 0) {
+                        console.log(`Found local rule group(s) with title "${remoteMetadataTitle}", replacing all groups from this supergroup with remote version`);
+                        
+                        // Remove all local groups that have IDs matching remote groups (they're part of this supergroup)
+                        const beforeCount = autoFixSettings.ruleGroups.length;
+                        autoFixSettings.ruleGroups = autoFixSettings.ruleGroups.filter(g => !remoteGroupIds.has(g.id));
+                        const removedCount = beforeCount - autoFixSettings.ruleGroups.length;
+                        if (removedCount > 0) {
+                            console.log(`Removed ${removedCount} local group(s) that match remote group IDs`);
+                        }
+                    }
+                }
+
                 // Process each rule group from rules.json
                 data.ruleGroups.forEach(group => {
-                    // Check if this built-in group already exists
-                    const existingIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id && g.isBuiltIn);
+                    const processedRules = group.rules ? group.rules.map(remoteRule => {
+                        const restoredRule = restoreFunction(remoteRule);
+                        
+                        // Preserve user settings if this rule existed locally
+                        if (remoteRule.find && remoteRule.replace) {
+                            const ruleKey = `${group.id}|${remoteRule.find}|${remoteRule.replace}`;
+                            const preservedSettings = preservedRuleSettings.get(ruleKey);
+                            
+                            if (preservedSettings !== undefined) {
+                                // Preserve askMode and enabled settings from local rule
+                                if (preservedSettings.askMode !== undefined) {
+                                    restoredRule.askMode = preservedSettings.askMode;
+                                }
+                                if (preservedSettings.enabled !== undefined) {
+                                    restoredRule.enabled = preservedSettings.enabled;
+                                }
+                            }
+                        }
+                        
+                        return restoredRule;
+                    }) : [];
 
                     const processedGroup = {
                         ...group,
                         isBuiltIn: true, // Mark as built-in
-                        rules: group.rules ? group.rules.map(restoreFunction) : []
+                        rules: processedRules
                     };
+                    
+                    // Preserve group-level enabled state if it existed locally
+                    const preservedEnabled = preservedGroupEnabled.get(group.id);
+                    if (preservedEnabled !== undefined) {
+                        processedGroup.enabled = preservedEnabled;
+                        console.log(`Preserved group enabled state for "${group.title}": ${preservedEnabled}`);
+                    }
+
+                    // Check if a group with this ID already exists (regardless of isBuiltIn flag)
+                    // This ensures we replace local groups even if they weren't marked as built-in
+                    const existingIndex = autoFixSettings.ruleGroups.findIndex(g => g.id === group.id);
 
                     if (existingIndex >= 0) {
-                        // Update existing built-in group
+                        // Replace existing group (whether it was built-in or local)
+                        console.log(`Replacing rule group "${autoFixSettings.ruleGroups[existingIndex].title}" (ID: ${group.id}) with remote version`);
                         autoFixSettings.ruleGroups[existingIndex] = processedGroup;
                     } else {
                         // Add new built-in group
@@ -11345,7 +11478,13 @@ Line two
             if (autoFixSettings.ruleGroups) {
                 autoFixSettings.ruleGroups.forEach(group => {
                     // Check if group is built-in AND enabled
-                    if (group.isBuiltIn && group.enabled !== false && group.rules) {
+                    // Skip entire group if it's disabled, regardless of individual rule settings
+                    if (group.enabled === false) {
+                        console.log(`⏭️ Skipping built-in group "${group.title}" because it's disabled`);
+                        return;
+                    }
+                    
+                    if (group.isBuiltIn && group.rules) {
                         group.rules.forEach(rule => {
                             // Check if rule has the tag and is not explicitly disabled
                             if (rule.tags && rule.tags.includes(tag) && rule.enabled !== false) {
@@ -11908,6 +12047,12 @@ Line two
 
             if (autoFixSettings.ruleGroups) {
                 autoFixSettings.ruleGroups.forEach(group => {
+                    // Skip entire group if it's disabled, regardless of individual rule settings
+                    if (group.enabled === false) {
+                        console.log(`⏭️ Skipping entire group "${group.title}" because it's disabled`);
+                        return;
+                    }
+                    
                     if (group.rules && Array.isArray(group.rules)) {
                         processRules(group.rules, `group "${group.title}"`);
                     }
@@ -12942,8 +13087,14 @@ Line two
                 mainButtonContainer.appendChild(autoFixButton);
 
                 aiButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
+                aiButtonContainer.id = 'genius-ai-button-container';
                 aiButtonContainer.appendChild(autoscribeButton);
                 aiButtonContainer.appendChild(aifixButton);
+                // Store reference and set initial visibility (hidden by default)
+                window.aiButtonContainer = aiButtonContainer;
+                // Hide by default, will be shown if preference is saved
+                aiButtonContainer.style.display = 'none';
+                updateAIButtonsVisibility();
                 smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', {
                     marginBottom: '0.5rem',
                     flexWrap: 'wrap',
@@ -13164,6 +13315,12 @@ Line two
             console.log('🔧 Init aborted - not on Genius or already initialized');
             return;
         }
+
+        // Load AI buttons visibility preference
+        loadAIButtonsVisibility();
+
+        // Set up console command for toggling AI buttons
+        setupAIConsoleCommand();
 
         // Immediate cleanup of any lingering highlights from previous sessions
         console.log('✅ Initializing: cleaning up any existing highlights...');
@@ -13482,8 +13639,14 @@ Line two
                     mainButtonContainer.appendChild(autoFixButton);
 
                     const aiButtonContainer = UI.createFlexContainer('row', '0', { marginBottom: '0.5rem' });
+                    aiButtonContainer.id = 'genius-ai-button-container';
                     aiButtonContainer.appendChild(autoscribeButton);
                     aiButtonContainer.appendChild(aifixButton);
+                    // Store reference and set initial visibility (hidden by default)
+                    window.aiButtonContainer = aiButtonContainer;
+                    // Hide by default, will be shown if preference is saved
+                    aiButtonContainer.style.display = 'none';
+                    updateAIButtonsVisibility();
 
                     const smallButtonsContainer = UI.createFlexContainer('row', '0.5rem', {
                         marginBottom: '0.5rem',
