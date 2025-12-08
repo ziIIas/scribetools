@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global Body Styles from request */
+body {
+  color: rgb(0, 0, 0);
+  font-family: "Programme", Arial, sans-serif;
+  line-height: 1.45;
+  margin: 0;
+  background-color: #fff;
+}
+
+/* Editor container matches ScribeTools dimensions and font */
+.genius-editor {
+  width: 100%;
+  height: 100%;
+  /* Used min-height 100vh to ensure full screen usage, 
+     but respecting user's min-height request of 18.75rem implicitly via auto-growth */
+  min-height: 100vh; 
+  resize: none;
+  padding: 1rem;
+  font-size: 1.125rem;
+  font-weight: 100;
+  border-radius: 0px;
+  line-height: 1.5;
+  font-family: inherit;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* Ensure no scrollbar on the editor div itself if we want body to scroll, 
+     but typically for full screen apps, the editor manages overflow. 
+     Leaving auto for safety. */
+  overflow-y: auto;
+}
+
+.genius-editor:focus {
+  outline: none;
+}
+
+/* ScribeTools Syntax Highlighting Classes */
+
+/* Tags like <b>, </i>, [, ](123) */
+.st-tag {
+  color: #a0a6ad;
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+/* Active Bold Content */
+.st-bold {
+  font-weight: 600;
+}
+
+/* Active Italic Content */
+.st-italic {
+  font-style: italic;
+}
+
+/* Placeholder styling */
+.genius-editor p.is-editor-empty:first-child::before {
+  color: #adb5bd;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

@@ -1,0 +1,5 @@
+{
+  "name": "Genius Scribe Editor",
+  "description": "A standalone, robust Tiptap-based editor replicating the Genius.com lyric editing experience with advanced Auto-Fix and Ask Mode capabilities.",
+  "requestFramePermissions": []
+}
