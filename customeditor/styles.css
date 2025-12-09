@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /* Global Body Styles from request */
 body {
   color: rgb(0, 0, 0);
@@ -11,31 +7,43 @@ body {
   background-color: #fff;
 }
 
-/* Editor container matches ScribeTools dimensions and font */
+/* Editor container matches the host textarea metrics */
 .genius-editor {
   width: 100%;
-  height: 100%;
-  /* Used min-height 100vh to ensure full screen usage, 
-     but respecting user's min-height request of 18.75rem implicitly via auto-growth */
-  min-height: 100vh; 
+  min-height: 18.75rem;
+  height: auto;
   resize: none;
-  padding: 1rem;
-  font-size: 1.125rem;
-  font-weight: 100;
-  border-radius: 0px;
-  line-height: 1.5;
-  font-family: inherit;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
   outline: none;
+  border-radius: 0;
+  background: transparent;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  /* Ensure no scrollbar on the editor div itself if we want body to scroll, 
-     but typically for full screen apps, the editor manages overflow. 
-     Leaving auto for safety. */
-  overflow-y: auto;
+  box-sizing: border-box;
 }
 
 .genius-editor:focus {
   outline: none;
+}
+
+.ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: inherit;
+}
+
+.ProseMirror p {
+  margin: 0;
+  padding: 0;
+}
+
+.ProseMirror p + p {
+  margin-top: 0.25rem;
 }
 
 /* ScribeTools Syntax Highlighting Classes */
