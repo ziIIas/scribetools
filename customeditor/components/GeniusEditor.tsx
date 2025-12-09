@@ -118,6 +118,7 @@ const GeniusEditor: React.FC = () => {
 
   // Keep the parent frame up to date with the editor's height
   useEffect(() => {
+    if (!editor) return;
     if (!containerRef.current) return;
     const observer = new ResizeObserver(entries => {
       const entry = entries[0];
@@ -131,7 +132,7 @@ const GeniusEditor: React.FC = () => {
     });
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [editorId]);
+  }, [editor, editorId]);
 
   // Listen for parent -> iframe messages
   useEffect(() => {
