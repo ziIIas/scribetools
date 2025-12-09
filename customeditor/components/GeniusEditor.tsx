@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { GeniusFormatting } from '../extensions/GeniusFormatting';
 
 type ParentMessage =
-  | { type: 'init'; text?: string; selectionStart?: number; selectionEnd?: number; focus?: boolean; fontSize?: string; lineHeight?: string; fontFamily?: string; editorId?: string }
+  | { type: 'init'; text?: string; selectionStart?: number; selectionEnd?: number; focus?: boolean; fontSize?: string; lineHeight?: string; fontFamily?: string; fontWeight?: string; editorId?: string }
   | { type: 'set-content'; text: string; editorId?: string }
   | { type: 'set-selection'; selectionStart: number; selectionEnd: number; editorId?: string }
   | { type: 'focus'; editorId?: string };
@@ -95,9 +96,13 @@ const GeniusEditor: React.FC = () => {
     editor?.commands.setContent(plainTextToDoc(text), false);
   };
 
+  const docToPlainText = (doc: ProseMirrorNode) => {
+    return doc.textBetween(0, doc.content.size, '\n', '\n');
+  };
+
   const postContentUpdate = (activeEditor: typeof editor | null) => {
     if (!activeEditor) return;
-    const text = activeEditor.getText();
+    const text = docToPlainText(activeEditor.state.doc);
     const html = activeEditor.getHTML();
     const { from, to } = activeEditor.state.selection;
     const selectionStart = activeEditor.state.doc.textBetween(0, from, '\n', '\n').length;
@@ -171,6 +176,7 @@ const GeniusEditor: React.FC = () => {
           if (event.data.fontFamily) root.style.fontFamily = event.data.fontFamily;
           if (event.data.lineHeight) root.style.lineHeight = event.data.lineHeight;
           if (event.data.fontSize) root.style.fontSize = event.data.fontSize;
+          if (event.data.fontWeight) root.style.fontWeight = event.data.fontWeight;
         }
 
         postContentUpdate(editor);
