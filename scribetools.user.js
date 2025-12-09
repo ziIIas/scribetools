@@ -4930,6 +4930,8 @@
 
     function isTextEntryElement(element) {
         if (!element) return false;
+        if (element.dataset && element.dataset.scribetoolsCustomEditor === 'true') return true;
+        if (element._linkedTextarea) return true;
         if (element.tagName === 'TEXTAREA') return true;
         if (element.isContentEditable) return true;
         if (element.tagName === 'INPUT') {
@@ -4961,6 +4963,14 @@
 
     function detectEditorContext(element) {
         if (!element || !element.closest) return null;
+
+        if (element.dataset && element.dataset.scribetoolsCustomEditor === 'true' && element._linkedTextarea) {
+            return detectEditorContext(element._linkedTextarea);
+        }
+
+        if (element._linkedTextarea) {
+            return detectEditorContext(element._linkedTextarea);
+        }
 
         // Exclude search forms and inputs
         const searchForm = element.closest('form[action*="/search"]');
@@ -10287,18 +10297,25 @@ Line two
                 mutation.removedNodes.forEach((node) => {
                     // Check if a textarea with custom editor was removed
                     if (node.nodeType === Node.ELEMENT_NODE) {
-                        if (node.tagName === 'TEXTAREA' && node._customEditorActive && node._replacementDiv) {
+                        if (node.tagName === 'TEXTAREA' && node._customEditorActive) {
                             console.log('🧹 Textarea removed by React, cleaning up custom editor');
-                            if (node._replacementDiv.parentElement) {
+                            if (node._customEditorIframe && node._customEditorIframe.parentElement) {
+                                node._customEditorIframe.remove();
+                            }
+                            if (node._replacementDiv && node._replacementDiv.parentElement) {
                                 node._replacementDiv.remove();
                             }
                         }
                         // Also check if container was removed
                         const textareas = node.querySelectorAll ? node.querySelectorAll('textarea') : [];
                         textareas.forEach(ta => {
-                            if (ta._customEditorActive && ta._replacementDiv && ta._replacementDiv.parentElement) {
-                                console.log('🧹 Container with custom editor removed, cleaning up');
-                                ta._replacementDiv.remove();
+                            if (ta._customEditorActive) {
+                                if (ta._customEditorIframe && ta._customEditorIframe.parentElement) {
+                                    ta._customEditorIframe.remove();
+                                }
+                                if (ta._replacementDiv && ta._replacementDiv.parentElement) {
+                                    ta._replacementDiv.remove();
+                                }
                             }
                         });
                     }
@@ -10311,6 +10328,391 @@ Line two
         });
     }
 
+    // ===========================================
+    // NEW CUSTOM EDITOR (Tiptap-based) INTEGRATION
+    // ===========================================
+
+    const CUSTOM_EDITOR_HTML = `<!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Genius Scribe Editor</title>
+            <script type="importmap">{
+  "imports": {
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@tiptap/extension-placeholder": "https://aistudiocdn.com/@tiptap/extension-placeholder@^3.11.0",
+    "@tiptap/react": "https://aistudiocdn.com/@tiptap/react@^3.11.0",
+    "@tiptap/starter-kit": "https://aistudiocdn.com/@tiptap/starter-kit@^3.11.0",
+    "@tiptap/core": "https://aistudiocdn.com/@tiptap/core@^3.11.0",
+    "@tiptap/pm/": "https://aistudiocdn.com/@tiptap/pm@^3.11.0/"
+  }
+}</script>
+            <style>
+              :root { color-scheme: light; }
+              * { box-sizing: border-box; }
+              body { margin: 0; font-family: 'Programme', Arial, sans-serif; background: #fff; color: #000; }
+              .editor-shell { width: 100%; height: 100%; }
+              .genius-editor { width: 100%; min-height: 100%; padding: 1rem; font-size: 1.125rem; font-weight: 100; line-height: 1.5; font-family: 'Programme', Arial, sans-serif; white-space: pre-wrap; overflow-wrap: break-word; outline: none; }
+              .genius-editor:focus { outline: none; }
+              .st-tag { color: #a0a6ad; font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace; opacity: 0.85; font-weight: 500; }
+              .st-bold { font-weight: 600; }
+              .st-italic { font-style: italic; }
+              .genius-editor p.is-editor-empty:first-child::before { color: #adb5bd; content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
+            </style>
+          </head>
+          <body>
+            <div id="root"></div>
+            <script type="module">
+              import React, { useEffect, useRef, useState } from 'react';
+              import ReactDOM from 'react-dom/client';
+              import { useEditor, EditorContent } from '@tiptap/react';
+              import StarterKit from '@tiptap/starter-kit';
+              import Placeholder from '@tiptap/extension-placeholder';
+              import { Extension } from '@tiptap/core';
+              import { Plugin, PluginKey } from '@tiptap/pm/state';
+              import { Decoration, DecorationSet } from '@tiptap/pm/view';
+
+              const GeniusFormatting = Extension.create({
+                name: 'geniusFormatting',
+                addProseMirrorPlugins() {
+                  return [
+                    new Plugin({
+                      key: new PluginKey('genius-syntax'),
+                      state: {
+                        init() { return DecorationSet.empty; },
+                        apply(tr) {
+                          const doc = tr.doc;
+                          const decorations = [];
+                          let boldActive = false;
+                          let italicActive = false;
+                          const tokenRegex = /<b>|<\/b>|<i>|<\/i>|\[[^\]]+\]\(\d+\)/gi;
+
+                          doc.descendants((node, pos) => {
+                            if (!node.isText) return true;
+                            const text = node.text || '';
+                            let lastIndex = 0;
+                            let match;
+
+                            while ((match = tokenRegex.exec(text)) !== null) {
+                              if (match.index > lastIndex) {
+                                const from = pos + lastIndex;
+                                const to = pos + match.index;
+                                if (boldActive) decorations.push(Decoration.inline(from, to, { class: 'st-bold' }));
+                                if (italicActive) decorations.push(Decoration.inline(from, to, { class: 'st-italic' }));
+                              }
+
+                              const token = match[0];
+                              const tokenStart = pos + match.index;
+                              const tokenEnd = tokenStart + token.length;
+                              const lowerToken = token.toLowerCase();
+
+                              if (lowerToken === '<b>') {
+                                boldActive = true;
+                                decorations.push(Decoration.inline(tokenStart, tokenEnd, { class: 'st-tag' }));
+                              } else if (lowerToken === '</b>') {
+                                boldActive = false;
+                                decorations.push(Decoration.inline(tokenStart, tokenEnd, { class: 'st-tag' }));
+                              } else if (lowerToken === '<i>') {
+                                italicActive = true;
+                                decorations.push(Decoration.inline(tokenStart, tokenEnd, { class: 'st-tag' }));
+                              } else if (lowerToken === '</i>') {
+                                italicActive = false;
+                                decorations.push(Decoration.inline(tokenStart, tokenEnd, { class: 'st-tag' }));
+                              } else if (token.startsWith('[')) {
+                                const annotMatch = /^\[([^\]]+)\]\((\d+)\)$/.exec(token);
+                                if (annotMatch) {
+                                  const innerText = annotMatch[1];
+                                  const openBracketEnd = tokenStart + 1;
+                                  decorations.push(Decoration.inline(tokenStart, openBracketEnd, { class: 'st-tag' }));
+                                  const textStart = openBracketEnd;
+                                  const textEnd = textStart + innerText.length;
+                                  if (boldActive) decorations.push(Decoration.inline(textStart, textEnd, { class: 'st-bold' }));
+                                  if (italicActive) decorations.push(Decoration.inline(textStart, textEnd, { class: 'st-italic' }));
+                                  decorations.push(Decoration.inline(textEnd, tokenEnd, { class: 'st-tag' }));
+                                } else {
+                                  decorations.push(Decoration.inline(tokenStart, tokenEnd, { class: 'st-tag' }));
+                                }
+                              }
+
+                              lastIndex = match.index + token.length;
+                            }
+
+                            if (lastIndex < text.length) {
+                              const from = pos + lastIndex;
+                              const to = pos + text.length;
+                              if (boldActive) decorations.push(Decoration.inline(from, to, { class: 'st-bold' }));
+                              if (italicActive) decorations.push(Decoration.inline(from, to, { class: 'st-italic' }));
+                            }
+                          });
+
+                          return DecorationSet.create(doc, decorations);
+                        }
+                      },
+                      props: {
+                        decorations(state) { return this.getState(state); }
+                      }
+                    })
+                  ];
+                }
+              });
+
+              const textToDoc = (text) => {
+                  const normalized = (text || '').replace(/\r\n/g, '\n');
+                  const paragraphs = normalized.split('\n');
+                  const content = paragraphs.map(line => ({ type: 'paragraph', content: line ? [{ type: 'text', text: line }] : [] }));
+                  return { type: 'doc', content: content.length ? content : [{ type: 'paragraph' }] };
+                };
+
+              const GeniusEditor = ({ initialContent }) => {
+                const [incomingContent, setIncomingContent] = useState(initialContent || '');
+                const contentRef = useRef(null);
+
+                const editor = useEditor({
+                  extensions: [
+                    StarterKit.configure({ bold: false, italic: false, code: false, codeBlock: false, strike: false }),
+                    Placeholder.configure({ placeholder: 'Start typing lyrics...' }),
+                    GeniusFormatting
+                  ],
+                  content: textToDoc(incomingContent),
+                  editorProps: { attributes: { class: 'genius-editor', spellcheck: 'false' } },
+                  onUpdate: ({ editor }) => {
+                    const text = editor.getText();
+                    window.parent.postMessage({ type: 'scribetools-editor-change', value: text }, '*');
+                    queueMicrotask(() => {
+                      const height = contentRef.current?.scrollHeight || 0;
+                      window.parent.postMessage({ type: 'scribetools-editor-height', height }, '*');
+                    });
+                  }
+                });
+
+                useEffect(() => {
+                  window.parent.postMessage({ type: 'scribetools-editor-ready' }, '*');
+                }, []);
+
+                useEffect(() => {
+                  if (!editor) return;
+                  const current = editor.getText();
+                  if (current !== (incomingContent || '')) {
+                    editor.commands.setContent(textToDoc(incomingContent || ''));
+                  }
+                }, [incomingContent, editor]);
+
+                useEffect(() => {
+                  const handler = (event) => {
+                    const data = event.data || {};
+                    if (data.type === 'scribetools-set-content') {
+                      setIncomingContent(data.value || '');
+                    }
+                  };
+                  window.addEventListener('message', handler);
+                  return () => window.removeEventListener('message', handler);
+                }, []);
+
+                useEffect(() => {
+                  if (!contentRef.current) return;
+                  const observer = new ResizeObserver(() => {
+                    const height = contentRef.current?.scrollHeight || 0;
+                    window.parent.postMessage({ type: 'scribetools-editor-height', height }, '*');
+                  });
+                  observer.observe(contentRef.current);
+                  return () => observer.disconnect();
+                }, [contentRef]);
+
+                if (!editor) return null;
+                return React.createElement('div', { className: 'editor-shell' },
+                  React.createElement(EditorContent, { editor, ref: contentRef, className: 'w-full h-full' })
+                );
+              };
+
+              const root = ReactDOM.createRoot(document.getElementById('root'));
+              root.render(React.createElement(GeniusEditor, { initialContent: '' }));
+            </script>
+          </body>
+        </html>`;
+
+    let customEditorBlobUrl = null;
+    const customEditorWindowMap = new Map();
+
+    function buildCustomEditorBlob() {
+        if (!customEditorBlobUrl) {
+            customEditorBlobUrl = URL.createObjectURL(new Blob([CUSTOM_EDITOR_HTML], { type: 'text/html' }));
+        }
+        return customEditorBlobUrl;
+    }
+
+    function postContentToCustomEditor(textEditor) {
+        if (!textEditor || !textEditor._customEditorIframe || !textEditor._customEditorIframe.contentWindow) return;
+        try {
+            textEditor._customEditorIframe.contentWindow.postMessage({
+                type: 'scribetools-set-content',
+                value: textEditor.value || ''
+            }, '*');
+        } catch (err) {
+            console.warn('Failed to sync content to custom editor iframe:', err);
+        }
+    }
+
+    function syncCustomEditorPosition(textEditor) {
+        if (!textEditor || !textEditor._customEditorIframe) return;
+        const iframe = textEditor._customEditorIframe;
+        const parent = textEditor.parentElement;
+        if (!parent) return;
+
+        if (parent && (parent.style.position === '' || parent.style.position === 'static')) {
+            parent.style.position = 'relative';
+        }
+
+        iframe.style.position = 'absolute';
+        iframe.style.left = textEditor.offsetLeft + 'px';
+        iframe.style.top = textEditor.offsetTop + 'px';
+        iframe.style.width = textEditor.offsetWidth + 'px';
+        iframe.style.height = Math.max(textEditor.scrollHeight, textEditor.offsetHeight) + 'px';
+        iframe.style.zIndex = '6';
+        iframe.style.border = 'none';
+    }
+
+    function createCustomEditorIframe(textEditor) {
+        if (!textEditor || textEditor._customEditorActive || textEditor.tagName !== 'TEXTAREA') {
+            return textEditor ? textEditor._customEditorIframe : null;
+        }
+
+        const parent = textEditor.parentElement;
+        if (!parent) return null;
+
+        const iframe = document.createElement('iframe');
+        iframe.dataset.scribetoolsCustomEditor = 'true';
+        iframe.setAttribute('scrolling', 'no');
+        iframe.setAttribute('frameborder', '0');
+        iframe.style.background = 'transparent';
+        iframe._linkedTextarea = textEditor;
+
+        const savedStyle = textEditor.getAttribute('style') || '';
+        textEditor._savedInlineStyle = savedStyle;
+        textEditor.style.opacity = '0';
+        textEditor.style.pointerEvents = 'none';
+        textEditor.style.caretColor = 'transparent';
+
+        if (getComputedStyle(parent).position === 'static') {
+            parent.style.position = 'relative';
+        }
+
+        const resizeObserver = new ResizeObserver(() => syncCustomEditorPosition(textEditor));
+        resizeObserver.observe(textEditor);
+
+        iframe.addEventListener('load', () => {
+            customEditorWindowMap.set(iframe.contentWindow, textEditor);
+            postContentToCustomEditor(textEditor);
+            syncCustomEditorPosition(textEditor);
+        });
+
+        iframe.addEventListener('focus', () => {
+            textEditor.dispatchEvent(new Event('focus', { bubbles: true }));
+        });
+        iframe.addEventListener('blur', () => {
+            textEditor.dispatchEvent(new Event('blur', { bubbles: true }));
+        });
+
+        iframe.src = buildCustomEditorBlob();
+        parent.appendChild(iframe);
+
+        textEditor._customEditorIframe = iframe;
+        textEditor._customEditorActive = true;
+        textEditor.classList.add('scribetools-custom-editor-active');
+        textEditor._customEditorResizeObserver = resizeObserver;
+
+        syncCustomEditorPosition(textEditor);
+        postContentToCustomEditor(textEditor);
+
+        return iframe;
+    }
+
+    function updateCustomEditorOverlay(textEditor) {
+        if (!textEditor || !textEditor._customEditorActive) return;
+        syncCustomEditorPosition(textEditor);
+        postContentToCustomEditor(textEditor);
+    }
+
+    function ensureCustomEditorOverlay(textEditor) {
+        if (!autoFixSettings.useCustomEditor) return false;
+        if (!textEditor || textEditor.tagName !== 'TEXTAREA') return false;
+        if (textEditor._customEditorActive && textEditor._customEditorIframe) {
+            updateCustomEditorOverlay(textEditor);
+            return true;
+        }
+        return !!createCustomEditorIframe(textEditor);
+    }
+
+    function disableCustomEditor(textEditor) {
+        if (!textEditor || !textEditor._customEditorActive) return;
+
+        if (textEditor._customEditorResizeObserver) {
+            textEditor._customEditorResizeObserver.disconnect();
+            delete textEditor._customEditorResizeObserver;
+        }
+
+        if (textEditor._customEditorIframe) {
+            const win = textEditor._customEditorIframe.contentWindow;
+            if (win) {
+                customEditorWindowMap.delete(win);
+            }
+            textEditor._customEditorIframe.remove();
+            delete textEditor._customEditorIframe;
+        }
+
+        if (textEditor._savedInlineStyle !== undefined) {
+            textEditor.setAttribute('style', textEditor._savedInlineStyle);
+            delete textEditor._savedInlineStyle;
+        }
+
+        textEditor.classList.remove('scribetools-custom-editor-active');
+        delete textEditor._customEditorActive;
+    }
+
+    function applyCustomEditorSetting() {
+        const lyricEditors = Array.from(document.querySelectorAll('textarea')).filter(el => isLyricsEditorTextarea(el));
+        lyricEditors.forEach(textEditor => {
+            if (autoFixSettings.useCustomEditor) {
+                ensureCustomEditorOverlay(textEditor);
+            } else {
+                disableCustomEditor(textEditor);
+            }
+        });
+    }
+
+    function handleCustomEditorMessage(event) {
+        const textarea = customEditorWindowMap.get(event.source);
+        if (!textarea) return;
+        const data = event.data || {};
+        if (data.type === 'scribetools-editor-ready') {
+            postContentToCustomEditor(textarea);
+            syncCustomEditorPosition(textarea);
+            return;
+        }
+
+        if (data.type === 'scribetools-editor-change') {
+            const incoming = data.value || '';
+            if (textarea.value !== incoming) {
+                textarea.value = incoming;
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                textarea.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            return;
+        }
+
+        if (data.type === 'scribetools-editor-height') {
+            if (textarea._customEditorIframe) {
+                const baseHeight = Math.max(textarea.scrollHeight, textarea.offsetHeight);
+                const nextHeight = Math.max(baseHeight, data.height || 0);
+                textarea._customEditorIframe.style.height = `${nextHeight}px`;
+            }
+        }
+    }
+
+    window.addEventListener('message', handleCustomEditorMessage);
     function highlightInteractiveMatch(textEditor, match, allMatches = null) {
         // Support both single match and multiple matches
         const matches = allMatches || [match];
@@ -13385,30 +13787,31 @@ Line two
         // Listen for focus on editors to check for auto-saved content
         document.addEventListener('focus', (e) => {
             const target = e.target;
-            if (!isTextEntryElement(target)) {
+            const baseTarget = target && target._linkedTextarea ? target._linkedTextarea : target;
+            if (!isTextEntryElement(baseTarget)) {
                 return;
             }
 
-            const context = detectEditorContext(target);
+            const context = detectEditorContext(baseTarget);
             if (!context) {
                 return;
             }
 
-            activeEditors.set(context.key, { element: target, context });
+            activeEditors.set(context.key, { element: baseTarget, context });
             lastFocusedContextKey = context.key;
 
             if (context.type === 'lyrics') {
-                if (autoFixSettings.useCustomEditor && target.tagName === 'TEXTAREA') {
-                    ensureCustomEditorOverlay(target);
-                    updateCustomEditorOverlay(target);
-                } else if (!autoFixSettings.useCustomEditor && target._customEditorActive) {
-                    disableCustomEditor(target);
+                if (autoFixSettings.useCustomEditor && baseTarget.tagName === 'TEXTAREA') {
+                    ensureCustomEditorOverlay(baseTarget);
+                    updateCustomEditorOverlay(baseTarget);
+                } else if (!autoFixSettings.useCustomEditor && baseTarget._customEditorActive) {
+                    disableCustomEditor(baseTarget);
                 }
 
                 // Only remove highlights if there's no active autofix popup
                 if (!currentInteractivePopup) {
                     console.log('Cleaning up any lingering highlights on lyrics editor focus...');
-                    removeInteractiveHighlight(target);
+                    removeInteractiveHighlight(baseTarget);
                 } else {
                     console.log('Keeping highlights during active autofix session...');
                 }
