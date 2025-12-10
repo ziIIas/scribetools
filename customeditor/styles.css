@@ -1,0 +1,77 @@
+/* Global Body Styles from request */
+body {
+  color: rgb(0, 0, 0);
+  font-family: "Programme", Arial, sans-serif;
+  font-size: 20.25px;
+  line-height: 26.3px;
+  margin: 0;
+  background-color: #fff;
+}
+
+/* Editor container matches the host textarea metrics */
+.genius-editor {
+  width: 100%;
+  min-height: 18.75rem;
+  height: auto;
+  resize: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  border-radius: 0;
+  background: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  box-sizing: border-box;
+}
+
+.genius-editor:focus {
+  outline: none;
+}
+
+.ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: inherit;
+}
+
+.ProseMirror p {
+  margin: 0;
+  padding: 0;
+}
+
+.ProseMirror p + p {
+  margin-top: 0.25rem;
+}
+
+/* ScribeTools Syntax Highlighting Classes */
+
+/* Tags like <b>, </i>, [, ](123) */
+.st-tag {
+  color: #a0a6ad;
+  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+/* Active Bold Content */
+.st-bold {
+  font-weight: 600;
+}
+
+/* Active Italic Content */
+.st-italic {
+  font-style: italic;
+}
+
+/* Placeholder styling */
+.genius-editor p.is-editor-empty:first-child::before {
+  color: #adb5bd;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
