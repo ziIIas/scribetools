@@ -7088,12 +7088,14 @@ Remember: Output only the formatted lyrics in triple backticks, nothing else.`;
                 // Step 4: Download the actual transcription JSON
                 updateButtonState('processing', 'Downloading...');
 
-                if (!result.lyrics) {
+                // Check for both result.Output1 and result.lyrics
+                const lyricsUrl = result.Output1 || result.lyrics;
+                if (!lyricsUrl) {
                     throw new Error('No lyrics URL in result');
                 }
 
-                console.log('[Autoscribe] Downloading transcription from:', result.lyrics);
-                const transcriptionResponse = await fetch(result.lyrics);
+                console.log('[Autoscribe] Downloading transcription from:', lyricsUrl);
+                const transcriptionResponse = await fetch(lyricsUrl);
 
                 if (!transcriptionResponse.ok) {
                     throw new Error(`Failed to download transcription: ${transcriptionResponse.status}`);
@@ -7454,12 +7456,33 @@ Line two` : '';
                                     const openrouterData = await openrouterResponse.json();
                                     console.log('[Autoscribe] OpenRouter response data:', openrouterData);
 
-                                    // Extract text from OpenRouter response (OpenAI-compatible format)
-                                    if (openrouterData.choices && openrouterData.choices[0] && openrouterData.choices[0].message && openrouterData.choices[0].message.content) {
-                                        let openrouterText = openrouterData.choices[0].message.content;
+                                    // Extract text from OpenRouter response (handle multiple formats)
+                                    let openrouterText = null;
+                                    
+                                    if (openrouterData.choices && openrouterData.choices[0]) {
+                                        const choice = openrouterData.choices[0];
+                                        console.log('[Autoscribe] Choice structure:', choice);
+                                        
+                                        // Try different response structures:
+                                        // 1. Standard OpenAI format: choices[0].message.content
+                                        // 2. Some models use: choices[0].text
+                                        // 3. Streaming format: choices[0].delta.content
+                                        // 4. Some models nest differently: choices[0].message.text
+                                        if (choice.message?.content) {
+                                            openrouterText = choice.message.content;
+                                        } else if (choice.text) {
+                                            openrouterText = choice.text;
+                                        } else if (choice.delta?.content) {
+                                            openrouterText = choice.delta.content;
+                                        } else if (choice.message?.text) {
+                                            openrouterText = choice.message.text;
+                                        }
+                                    }
+                                    
+                                    if (openrouterText) {
                                         console.log('[Autoscribe] Raw OpenRouter output:', openrouterText);
 
-                                        if (!openrouterText || openrouterText.trim() === '') {
+                                        if (openrouterText.trim() === '') {
                                             throw new Error('OpenRouter returned empty content');
                                         }
 
@@ -7479,7 +7502,8 @@ Line two` : '';
                                         updateButtonState('processing', 'Done', 98);
                                     } else {
                                         console.error('[Autoscribe] Unexpected response structure:', openrouterData);
-                                        throw new Error('Unexpected OpenRouter response structure (missing choices/message/content)');
+                                        const choiceKeys = openrouterData.choices?.[0] ? Object.keys(openrouterData.choices[0]).join(', ') : 'no choices';
+                                        throw new Error(`Unexpected OpenRouter response structure. Choice keys: ${choiceKeys}`);
                                     }
                                 } catch (fetchError) {
                                     clearInterval(waitInterval);
