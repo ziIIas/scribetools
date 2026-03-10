@@ -1457,17 +1457,6 @@
           ]
         },
         {
-          "description": "jay/J' -> J",
-          "find": "\\b(jay|J')\\b",
-          "replace": "J",
-          "flags": "gi",
-          "enabled": true,
-          "tags": [
-            "spelling",
-            "jewelry"
-          ]
-        },
-        {
           "description": "Baguette -> baguette",
           "find": "\\bBaguette\\b",
           "replace": "baguette",
@@ -1892,18 +1881,6 @@
           "tags": [
             "punctuation",
             "quotes"
-          ]
-        },
-        {
-          "description": "za/Za -> 'za or 'Za",
-          "find": "\\b([Zz]a)\\b",
-          "replace": "'$1",
-          "flags": "ge",
-          "enabled": true,
-          "enhancedBoundary": true,
-          "tags": [
-            "punctuation",
-            "slang"
           ]
         },
         {
