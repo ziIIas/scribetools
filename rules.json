@@ -2,65 +2,66 @@
   "metadata": {
     "author": "ziIIas",
     "title": "zilla's Rules",
-    "description": "Misc. rules for text processing and corrections",
+    "description": "Comprehensive rules for text processing and corrections, organized by category",
     "id": "1",
-    "version": "2"
+    "version": "5"
   },
-  "rules": [
+  "ruleGroups": [
     {
-      "description": "Capitalize backwood",
-      "find": "\\bbackwood(s?)\\b",
-      "replace": "Backwood$1",
-      "flags": "ge",
+      "id": "capitalization",
+      "title": "Capitalization",
+      "description": "Rules for fixing capitalization",
+      "author": "ziIIas",
+      "version": "4",
       "enabled": true,
-      "enhancedBoundary": true
-    },
-    {
-      "description": "dat -> that",
-      "find": "\\bdat\\b",
-      "replace": "that",
-      "flags": "gie",
-      "enabled": true,
-      "enhancedBoundary": true
-    },
-    {
-      "description": "Capitalize looseleaf",
-      "find": "\\blooseleaf\\b",
-      "replace": "LooseLeaf",
-      "flags": "gie",
-      "enabled": true,
-      "enhancedBoundary": true
-    },
-    {
-      "description": "Curly double quotes -> straight double quotes",
-      "find": "[\\u201c\\u201d]",
-      "replace": "\"",
-      "flags": "g",
-      "enabled": true
-    },
-    {
-      "description": "za/Za -> 'za or 'Za",
-      "find": "\\b([Zz]a)\\b",
-      "replace": "'$1",
-      "flags": "ge",
-      "enabled": true,
-      "enhancedBoundary": true
-    },
-            {
-          "description": "Curly apostrophes -> straight apostrophes",
-          "find": "[\\u2018\\u2019\\u2032]",
-          "replace": "'",
+      "rules": [
+        {
+          "description": "Capitalize standalone i",
+          "find": "(?<=^|[\\s\\-\\.,!?;:\\(\\[\\{'\"\"'])i(?=[\\s\\-\\.,!?;:\\)\\]\\}'\"\"]|$)",
+          "replace": "I",
           "flags": "g",
           "enabled": true,
-          "enhancedBoundary": false
+          "language": "en",
+          "tags": [
+            "capitalization"
+          ]
         },
         {
-          "description": "ur -> your",
-          "find": "\\bur\\b",
-          "replace": "your",
+          "description": "Capitalize i' contractions",
+          "find": "\\bi'",
+          "replace": "I'",
+          "flags": "ge",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "capitalization",
+            "contractions"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "Capitalize backwood",
+          "find": "\\bbackwood(s?)\\b",
+          "replace": "Backwood$1",
+          "flags": "ge",
+          "enabled": true,
+          "enhancedBoundary": true,
+          "tags": [
+            "capitalization",
+            "brands"
+          ]
+        },
+        {
+          "description": "Capitalize looseleaf",
+          "find": "\\blooseleaf\\b",
+          "replace": "LooseLeaf",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "tags": [
+            "capitalization",
+            "brands"
+          ]
         },
         {
           "description": "Capitalize cali",
@@ -68,23 +69,765 @@
           "replace": "Cali",
           "flags": "ge",
           "enabled": true,
+          "enhancedBoundary": true,
+          "tags": [
+            "capitalization",
+            "places"
+          ]
+        },
+        {
+          "description": "tec -> TEC",
+          "find": "\\btec\\b",
+          "replace": "TEC",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "capitalization",
+            "weapons"
+          ],
           "enhancedBoundary": true
         },
         {
-          "description": "fix double",
-          "find": "''",
-          "replace": "'",
-          "flags": "gi",
+          "description": "tv -> TV",
+          "find": "\\btv\\b",
+          "replace": "TV",
+          "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": false
+          "tags": [
+            "capitalization"
+          ],
+          "enhancedBoundary": true
         },
         {
-          "description": "ya -> your",
-          "find": "ya",
+          "description": "cuban -> Cuban",
+          "find": "\\bcuban\\b",
+          "replace": "Cuban",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "capitalization",
+            "jewelry"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "Capitalize first letter in parentheses",
+          "find": "(?<!<[^>]*)\\(([a-z])",
+          "replace": "function(match, firstChar) { return '(' + firstChar.toUpperCase(); }",
+          "flags": "g",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "capitalization",
+            "formatting"
+          ]
+        },
+        {
+          "description": "Beginning of line capitalization (skip if ZWSP or asterisk before letter)",
+          "find": "^((?:<[^>]+>|[^a-zA-Z<\\n])*)([a-z])",
+          "replace": "function(match, prefix, letter) { if (/\\d/.test(prefix)) { return match; } if (/[a-z]\\s+$/i.test(prefix)) { return match; } if (prefix.endsWith('\\u200B')) { return match; } if (prefix.endsWith('*')) { return match; } return prefix + letter.toUpperCase(); }",
+          "flags": "gm",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "capitalization"
+          ]
+        },
+        {
+          "description": "Proper noun capitalization",
+          "find": "\\b(january|february|march|april|may|june|july|august|september|october|november|december|monday|tuesday|wednesday|thursday|friday|saturday|sunday|nike|adidas|apple|google|amazon|facebook|instagram|twitter)\\b",
+          "replace": "function(match) { return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase(); }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "capitalization",
+            "proper-nouns"
+          ],
+          "enhancedBoundary": true
+        }
+      ]
+    },
+    {
+      "id": "contractions",
+      "title": "Contractions",
+      "description": "Rules for fixing contractions",
+      "author": "ziIIas",
+      "version": "4",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "n't contractions (aint, arent, cant, couldnt, didnt, doesnt, dont, hadnt, havent, hasnt, isnt, mustnt, shouldnt, wasnt, werent, wont, wouldnt)",
+          "find": "\\b(ai|are|ca|could|did|does|do|had|have|has|is|must|should|was|were|wo|would)nt\\b",
+          "replace": "$1n't",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "youre -> you're",
+          "find": "\\byoure\\b",
+          "replace": "you're",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "youll -> you'll",
+          "find": "\\byoull\\b",
+          "replace": "you'll",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "youve -> you've",
+          "find": "\\byouve\\b",
+          "replace": "you've",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "youd -> you'd",
+          "find": "\\byoud\\b",
+          "replace": "you'd",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "theyre -> they're",
+          "find": "\\btheyre\\b",
+          "replace": "they're",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "theyll -> they'll",
+          "find": "\\btheyll\\b",
+          "replace": "they'll",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "theyve -> they've",
+          "find": "\\btheyve\\b",
+          "replace": "they've",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "theyd -> they'd",
+          "find": "\\btheyd\\b",
+          "replace": "they'd",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "were going/gonna -> we're",
+          "find": "\\bwere\\b(?=\\s+(?:going|gonna|not|all|together|done|made))",
+          "replace": "we're",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "were here/there (context) -> we're",
+          "find": "\\bwere\\b(?=\\s+(?:here|there)(?:\\s+(?:now|today|earlier|before|waiting|standing|sitting|looking|watching|talking|going|coming|ready|about|just)|\\s*[,.]|\\s*$))",
+          "replace": "we're",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "well (future) -> we'll",
+          "find": "\\bwell\\b(?=\\s+(?:see|be|go|have|get|do|make|take|come|find))",
+          "replace": "we'll",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "weve -> we've",
+          "find": "\\bweve\\b",
+          "replace": "we've",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "wed -> we'd",
+          "find": "\\bwed\\b",
+          "replace": "we'd",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "its (context) -> it's",
+          "find": "\\bits\\b(?=\\s+(?:a|an|the|not|been|going|gonna|time|over|all|really|just|like|so|very))",
+          "replace": "it's",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "itll -> it'll",
+          "find": "\\bitll\\b",
+          "replace": "it'll",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "itd -> it'd",
+          "find": "\\bitd\\b",
+          "replace": "it'd",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "thats -> that's",
+          "find": "\\bthats\\b",
+          "replace": "that's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "whats -> what's",
+          "find": "\\bwhats\\b",
+          "replace": "what's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "heres -> here's",
+          "find": "\\bheres\\b",
+          "replace": "here's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "theres -> there's",
+          "find": "\\btheres\\b",
+          "replace": "there's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "wheres -> where's",
+          "find": "\\bwheres\\b",
+          "replace": "where's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "hes (context) -> he's",
+          "find": "\\bhes\\b(?=\\s+(?:a|an|the|not|been|going|gonna|like|so|very|all|really|just))",
+          "replace": "he's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "shes (context) -> she's",
+          "find": "\\bshes\\b(?=\\s+(?:a|an|the|not|been|going|gonna|like|so|very|all|really|just))",
+          "replace": "she's",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "im -> I'm",
+          "find": "\\bim\\b",
+          "replace": "I'm",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "ive -> I've",
+          "find": "\\bive\\b",
+          "replace": "I've",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "contractions",
+            "spelling"
+          ]
+        },
+        {
+          "description": "lets -> let's",
+          "find": "\\blets\\b",
+          "replace": "let's",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "contractions",
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        }
+      ]
+    },
+    {
+      "id": "apostrophes",
+      "title": "Missing Apostrophes",
+      "description": "Rules for adding missing apostrophes",
+      "author": "ziIIas",
+      "version": "4",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "gon -> gon'",
+          "find": "\\bgon\\b(?!')",
+          "replace": "function(match) { if (match === 'GON') return \"GON'\"; if (match === 'Gon') return \"Gon'\"; return \"gon'\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes",
+            "slang"
+          ]
+        },
+        {
+          "description": "fuckin -> fuckin'",
+          "find": "\\bfuckin\\b(?!')",
+          "replace": "function(match) { if (match === 'FUCKIN') return \"FUCKIN'\"; if (match === 'Fuckin') return \"Fuckin'\"; return \"fuckin'\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes",
+            "slang"
+          ]
+        },
+        {
+          "description": "til -> 'til (American English)",
+          "find": "(?<![''])\\btil\\b(?!')",
+          "replace": "function(match) { if (match === 'TIL') return \"'TIL\"; if (match === 'Til') return \"'Til\"; return \"'til\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "dialect": "US",
+          "tags": [
+            "apostrophes"
+          ]
+        },
+        {
+          "description": "'til/'till -> till (British/Commonwealth English)",
+          "find": "(?<!')\\b'?till?\\b(?!')",
+          "replace": "function(match) { if (match.toUpperCase() === match) return 'TILL'; if (match[0] === match[0].toUpperCase()) return 'Till'; return 'till'; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "dialect": ["UK", "CAN"],
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "cause (context) -> 'cause",
+          "find": "(?<![''])\\bcause\\b(?=\\s+(?:i|you|he|she|it|we|they|that|this|my|your|his|her|its|our|their))",
+          "replace": "function(match) { if (match === 'CAUSE') return \"'CAUSE\"; if (match === 'Cause') return \"'Cause\"; return \"'cause\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes"
+          ]
+        },
+        {
+          "description": "cuz -> 'cause (not cousin)",
+          "find": "(?<!(?:my|our|your|his|her|their|the)\\s+)(?<![''])('?)cuz\\b(?!se\\b)",
+          "replace": "function(match, existingApostrophe) { const apostrophe = existingApostrophe ? existingApostrophe : \"'\"; if (match === \"'CUZ\" || match === \"CUZ\") return apostrophe + \"cause\"; if (match === \"'Cuz\" || match === \"Cuz\") return apostrophe + \"cause\"; return apostrophe + \"cause\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes",
+            "slang"
+          ]
+        },
+        {
+          "description": "bout -> 'bout",
+          "find": "(?<![''])\\bbout\\b(?!')",
+          "replace": "function(match) { if (match === 'BOUT') return \"'BOUT\"; if (match === 'Bout') return \"'Bout\"; return \"'bout\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes"
+          ]
+        },
+        {
+          "description": "fore (context) -> 'fore",
+          "find": "(?<![''])\\bfore\\b(?=\\s+(?:i|you|he|she|it|we|they|the|a|an|my|your|his|her|its|our|their|this|that|y'all|yall|me|us|all|anyone|everyone|anybody|everybody|someone|somebody|long|now|then|sure|real))",
+          "replace": "function(match) { if (match === 'FORE') return \"'FORE\"; if (match === 'Fore') return \"'Fore\"; return \"'fore\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "apostrophes"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "spelling",
+      "title": "Spelling & Word Fixes",
+      "description": "Rules for fixing common spelling issues",
+      "author": "ziIIas",
+      "version": "4",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "ok -> okay",
+          "find": "\\bok\\b",
+          "replace": "function(match) { if (match === 'OK') return 'OKAY'; if (match === 'Ok') return 'Okay'; return 'okay'; }",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "sumn -> somethin'",
+          "find": "\\bsumn(?!')\\b",
+          "replace": "function(match) { if (match === 'SUMN') return \"SOMETHIN'\"; if (match === 'Sumn') return \"Somethin'\"; return \"somethin'\"; }",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "yuh -> yeah",
+          "find": "\\byuh\\b",
+          "replace": "function(match) { if (match === 'YUH') return 'YEAH'; if (match === 'Yuh') return 'Yeah'; return 'yeah'; }",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "yea -> yeah",
+          "find": "\\byea\\b",
+          "replace": "function(match) { if (match === 'YEA') return 'YEAH'; if (match === 'Yea') return 'Yeah'; return 'yeah'; }",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "aye/ay -> ayy",
+          "find": "\\b(aye|ay)\\b",
+          "replace": "function(match) { if (match === 'AYE' || match === 'AY') return 'AYY'; if (match === 'Aye' || match === 'Ay') return 'Ayy'; return 'ayy'; }",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "hoe -> ho",
+          "find": "\\bhoe\\b",
+          "replace": "function(match) { if (match === 'HOE') return 'HO'; if (match === 'Hoe') return 'Ho'; return 'ho'; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "ho' -> ho",
+          "find": "\\bho'\\b",
+          "replace": "function(match) { if (match === \"HO'\") return 'HO'; if (match === \"Ho'\") return 'Ho'; return 'ho'; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "lil/li'l -> lil'",
+          "find": "\\b(lil|li'l)(?!')\\b",
+          "replace": "function(match) { if (match === 'LIL' || match === \"LI'L\") return \"LIL'\"; if (match === 'Lil' || match === \"Li'l\") return match; return \"lil'\"; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "whoa -> woah",
+          "find": "\\bwhoa\\b",
+          "replace": "function(match) { if (match === 'WHOA') return 'WOAH'; if (match === 'Whoa') return 'Woah'; return 'woah'; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "dawg -> dog",
+          "find": "\\bdawg\\b",
+          "replace": "function(match) { if (match === 'DAWG') return 'DOG'; if (match === 'Dawg') return 'Dog'; return 'dog'; }",
+          "flags": "gie",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "choppa -> chopper",
+          "find": "\\bchoppa\\b",
+          "replace": "function(match) { if (match === 'CHOPPA') return 'CHOPPER'; if (match === 'Choppa') return 'Chopper'; return 'chopper'; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "oughtta -> oughta",
+          "find": "\\boughtta\\b",
+          "replace": "function(match) { if (match === 'OUGHTTA') return 'OUGHTA'; if (match === 'Oughtta') return 'Oughta'; return 'oughta'; }",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "naïve -> naive",
+          "find": "\\bnaïve\\b",
+          "replace": "function(match) { if (match === 'NAÏVE') return 'NAIVE'; if (match === 'Naïve') return 'Naive'; return 'naive'; }",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "all right -> alright",
+          "find": "\\ball right\\b",
+          "replace": "function(match) { if (match === 'ALL RIGHT') return 'ALRIGHT'; if (match === 'All Right' || match === 'All right') return 'Alright'; return 'alright'; }",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "cliche -> cliché",
+          "find": "\\bcliche\\b",
+          "replace": "function(match) { if (match === 'CLICHE') return 'CLICHÉ'; if (match === 'Cliche') return 'Cliché'; return 'cliché'; }",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "A.S.A.P. -> ASAP",
+          "find": "\\bA\\.S\\.A\\.P\\.",
+          "replace": "ASAP",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "acronyms"
+          ]
+        },
+        {
+          "description": "V.I.P.s -> VIPs",
+          "find": "\\bV\\.I\\.P\\.s\\b",
+          "replace": "VIPs",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "acronyms"
+          ]
+        },
+        {
+          "description": "V.I.P. -> VIP",
+          "find": "\\bV\\.I\\.P\\.",
+          "replace": "VIP",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "acronyms"
+          ]
+        },
+        {
+          "description": "dat -> that",
+          "find": "\\bdat\\b",
+          "replace": "that",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "ur -> your",
+          "find": "\\bur\\b",
           "replace": "your",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "ya -> your",
+          "find": "\\bya\\b",
+          "replace": "your",
+          "flags": "gie",
+          "enabled": true,
+          "enhancedBoundary": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
         },
         {
           "description": "y'know -> you know",
@@ -92,7 +835,10 @@
           "replace": "you know",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "tags": [
+            "spelling"
+          ]
         },
         {
           "description": "wassup -> what's up",
@@ -100,7 +846,12 @@
           "replace": "what's up",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
         },
         {
           "description": "d'fuck -> the fuck",
@@ -108,15 +859,32 @@
           "replace": "the fuck",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
         },
         {
-          "description": "'cuz -> cause",
+          "description": "'cuz -> 'cause",
           "find": "'cuz",
           "replace": "'cause",
           "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": true
+          "enhancedBoundary": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "cuz -> 'cause",
+          "find": "\\bcuz\\b",
+          "replace": "'cause",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
         },
         {
           "description": "tooly -> toolie",
@@ -124,23 +892,1082 @@
           "replace": "toolie",
           "flags": "gie",
           "enabled": true,
+          "enhancedBoundary": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "yall variations -> y'all",
+          "find": "\\b(ya'll|yall)\\b",
+          "replace": "y'all",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "dialect": "US",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "ima/imma variations -> I'ma",
+          "find": "\\b(ima|imma|i'mma|im'ma)\\b",
+          "replace": "I'ma",
+          "flags": "gi",
+          "enabled": true,
+          "language": "en",
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "alot -> a lot",
+          "find": "\\balot\\b",
+          "replace": "a lot",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ],
           "enhancedBoundary": true
         },
         {
-          "description": "em comma to em",
-          "find": "—,",
-          "replace": "—",
-          "flags": "g",
+          "description": "trynna -> tryna",
+          "find": "\\btrynna\\b",
+          "replace": "tryna",
+          "flags": "gie",
           "enabled": true,
-          "enhancedBoundary": false
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
         },
         {
-          "description": "double single quote -> one",
+          "description": "boujee/boujie -> bougie",
+          "find": "\\b(boujee|boujie)\\b",
+          "replace": "bougie",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "sux -> sucks",
+          "find": "\\bsux\\b",
+          "replace": "sucks",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "foe 'nem variations -> foenem",
+          "find": "\\bfoe[' ]?nem\\b",
+          "replace": "foenem",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "bro 'nem variations -> bronem",
+          "find": "\\bbro[' ]?nem\\b",
+          "replace": "bronem",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "switchey/switchie -> switchy",
+          "find": "\\b(switchey|switchie)\\b",
+          "replace": "switchy",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "switchys -> switchies",
+          "find": "\\bswitchys\\b",
+          "replace": "switchies",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "blickey/blickie -> blicky",
+          "find": "\\b(blickey|blickie)\\b",
+          "replace": "blicky",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "blickys -> blickies",
+          "find": "\\bblickys\\b",
+          "replace": "blickies",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "cous' -> cuz",
+          "find": "\\bcous'\\b",
+          "replace": "cuz",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "T'ed/Teed -> T'd",
+          "find": "\\b(t'ed|teed)\\b",
+          "replace": "T'd",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "slimey -> slimy",
+          "find": "\\bslimey\\b",
+          "replace": "slimy",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "high speed -> high-speed",
+          "find": "\\bhigh speed\\b",
+          "replace": "high-speed",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "e-way/eway -> E-way",
+          "find": "\\b(e-way|eway)\\b",
+          "replace": "E-way",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "10 K/ten K -> 10K",
+          "find": "\\b(10\\s*K|ten\\s*K)\\b",
+          "replace": "10K",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "Drake -> Drac'",
+          "find": "\\bdrake\\b",
+          "replace": "Drac'",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "Dracey -> Dracy",
+          "find": "\\bdracey\\b",
+          "replace": "Dracy",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "micro Draco -> Micro Draco",
+          "find": "\\bmicro draco\\b",
+          "replace": "Micro Draco",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "capitalization"
+          ]
+        },
+        {
+          "description": "mini Draco -> Mini Draco",
+          "find": "\\bmini draco\\b",
+          "replace": "Mini Draco",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "capitalization"
+          ]
+        },
+        {
+          "description": "TEC9 variants -> TEC-9",
+          "find": "\\b(tec9|tec-9|TEC9|TEC-9)\\b",
+          "replace": "TEC-9",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "Mac -> MAC",
+          "find": "\\bmac\\b",
+          "replace": "MAC",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "weapons",
+            "capitalization"
+          ]
+        },
+        {
+          "description": "MAC10/Mac10/mac10 -> MAC-10",
+          "find": "\\b(mac10|mac-10|MAC10|MAC-10)\\b",
+          "replace": "MAC-10",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "MAC11/Mac11/mac11 -> MAC-11",
+          "find": "\\b(mac11|mac-11|MAC11|MAC-11)\\b",
+          "replace": "MAC-11",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "Glockys -> Glockies",
+          "find": "\\bglockys\\b",
+          "replace": "Glockies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "G-Lock -> G-lock",
+          "find": "G-Lock",
+          "replace": "G-lock",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "glizzys -> glizzies",
+          "find": "\\bglizzys\\b",
+          "replace": "glizzies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "gen 1/gen'1 -> Gen1",
+          "find": "\\bgen[' ]?1\\b",
+          "replace": "Gen1",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "F and N -> F&N",
+          "find": "\\bF and N\\b",
+          "replace": "F&N",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "KelTec/Kel-Tech -> Kel-Tec",
+          "find": "\\b(keltec|kel-tec)\\b",
+          "replace": "Kel-Tec",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "brands"
+          ]
+        },
+        {
+          "description": "Sig -> SIG",
+          "find": "\\bsig\\b",
+          "replace": "SIG",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "capitalization"
+          ]
+        },
+        {
+          "description": "Rooger -> Ruger",
+          "find": "\\brooger\\b",
+          "replace": "Ruger",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "brands"
+          ]
+        },
+        {
+          "description": "Smith and Wesson -> Smith & Wesson",
+          "find": "Smith and Wesson",
+          "replace": "Smith & Wesson",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons",
+            "brands"
+          ]
+        },
+        {
+          "description": "M and P -> M&P",
+          "find": "M and P",
+          "replace": "M&P",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "five-seven -> 5.7",
+          "find": "\\bfive-seven\\b",
+          "replace": "5.7",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "thirty-eight -> .38",
+          "find": "\\bthirty-eight\\b",
+          "replace": ".38",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "mag' -> mag",
+          "find": "\\bmag'\\b",
+          "replace": "mag",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "30-round -> thirty-round",
+          "find": "\\b30-round\\b",
+          "replace": "thirty-round",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "50-round -> fifty-round",
+          "find": "\\b50-round\\b",
+          "replace": "fifty-round",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "100-round -> hundred-round",
+          "find": "\\b100-round\\b",
+          "replace": "hundred-round",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "weapons"
+          ]
+        },
+        {
+          "description": "Plain Jane variations -> plain jane",
+          "find": "\\b(plain jane|Plain Jane)\\b",
+          "replace": "plain jane",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "prezi/Presi' -> presi",
+          "find": "\\b(prezi|Presi')\\b",
+          "replace": "presi",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "bustdown/bussdown -> bust down",
+          "find": "\\b(bustdown|bussdown)\\b",
+          "replace": "bust down",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "jewelry"
+          ]
+        },
+        {
+          "description": "Richy -> Richie",
+          "find": "\\brichy\\b",
+          "replace": "Richie",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        },
+        {
+          "description": "Carty -> Carti'",
+          "find": "\\bcarty\\b",
+          "replace": "Carti'",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "Rolley -> Rollie",
+          "find": "\\brolley\\b",
+          "replace": "Rollie",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "jewelry"
+          ]
+        },
+        {
+          "description": "Audemar -> Audemars",
+          "find": "\\baudemar\\b",
+          "replace": "Audemars",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "jewelry",
+            "brands"
+          ]
+        },
+        {
+          "description": "Baguette -> baguette",
+          "find": "\\bBaguette\\b",
+          "replace": "baguette",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "jewelry"
+          ]
+        },
+        {
+          "description": "Xannie -> Xanny",
+          "find": "\\bxannie\\b",
+          "replace": "Xanny",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Xannys -> Xannies",
+          "find": "\\bxannys\\b",
+          "replace": "Xannies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Perk -> Perc'",
+          "find": "\\bperk\\b",
+          "replace": "Perc'",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "yerk -> yerc",
+          "find": "\\byerk\\b",
+          "replace": "yerc",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Perkys -> Perkies",
+          "find": "\\bperkys\\b",
+          "replace": "Perkies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Roxys -> Roxies",
+          "find": "\\broxys\\b",
+          "replace": "Roxies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Oxys -> Oxies",
+          "find": "\\boxys\\b",
+          "replace": "Oxies",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Addies -> Addys",
+          "find": "\\baddies\\b",
+          "replace": "Addys",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Wockhart -> Wockhardt",
+          "find": "\\bwockhart\\b",
+          "replace": "Wockhardt",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs",
+            "brands"
+          ]
+        },
+        {
+          "description": "Wockie -> Wocky",
+          "find": "\\bwockie\\b",
+          "replace": "Wocky",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "Hi-Tec/High tech -> Hi-Tech",
+          "find": "\\b(hi-tec|high tech)\\b",
+          "replace": "Hi-Tech",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs",
+            "brands"
+          ]
+        },
+        {
+          "description": "Molly -> molly",
+          "find": "\\bmolly\\b",
+          "replace": "molly",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "fetti -> fetty",
+          "find": "\\bfetti\\b",
+          "replace": "fetty",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ]
+        },
+        {
+          "description": "extasy -> ecstasy",
+          "find": "\\bextasy\\b",
+          "replace": "ecstasy",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "drugs"
+          ]
+        },
+        {
+          "description": "SRT8/skrate -> straight-eight",
+          "find": "\\b(SRT8|skrate)\\b",
+          "replace": "straight-eight",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "RedEye/Red-eye -> Redeye",
+          "find": "\\b(RedEye|Red-eye)\\b",
+          "replace": "Redeye",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "Beamer -> Bimmer",
+          "find": "\\bbeamer\\b",
+          "replace": "Bimmer",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "Lamboh -> Lambo'",
+          "find": "\\blamboh\\b",
+          "replace": "Lambo'",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "rango -> 'Rango",
+          "find": "\\brango\\b",
+          "replace": "'Rango",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "KIA -> Kia",
+          "find": "\\bKIA\\b",
+          "replace": "Kia",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars",
+            "brands"
+          ]
+        },
+        {
+          "description": "Vete/Vett -> 'Vette",
+          "find": "\\b(vete|vett)\\b",
+          "replace": "'Vette",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "Mayback -> Maybach",
+          "find": "\\bmayback\\b",
+          "replace": "Maybach",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars",
+            "brands"
+          ]
+        },
+        {
+          "description": "Scat'/Skat -> Scat",
+          "find": "\\b(scat'|skat)\\b",
+          "replace": "Scat",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "TrackHawk -> Trackhawk",
+          "find": "\\btrackhawk\\b",
+          "replace": "Trackhawk",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "fin fin -> fin-fin",
+          "find": "\\bfin fin\\b",
+          "replace": "fin-fin",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "Mazi/Masi' -> Masi",
+          "find": "\\b(mazi|masi')\\b",
+          "replace": "Masi",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "stoleo/stoley -> stolie",
+          "find": "\\b(stoleo|stoley)\\b",
+          "replace": "stolie",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "cars"
+          ]
+        },
+        {
+          "description": "skrt -> skrrt",
+          "find": "\\bskrt\\b",
+          "replace": "skrrt",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "onomatopoeia"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "grah -> grrah",
+          "find": "\\bgrah\\b",
+          "replace": "grrah",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "onomatopoeia"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "brah -> brrah",
+          "find": "\\bbrah\\b",
+          "replace": "brrah",
+          "flags": "gi",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": [
+            "spelling",
+            "onomatopoeia"
+          ]
+        },
+        {
+          "description": "slat -> slatt",
+          "find": "\\bslat\\b",
+          "replace": "slatt",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "slang"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "mmm -> mm",
+          "find": "\\bmmm\\b",
+          "replace": "function(match) { return match[0] + 'm'; }",
+          "flags": "gie",
+          "enabled": true,
+          "tags": [
+            "spelling",
+            "onomatopoeia"
+          ],
+          "enhancedBoundary": true
+        },
+        {
+          "description": "naa/nawh -> naw",
+          "find": "\\b(naa|nawh)\\b",
+          "replace": "naw",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "spelling"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "punctuation",
+      "title": "Punctuation",
+      "description": "Rules for fixing punctuation",
+      "author": "ziIIas",
+      "version": "4",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "Curly double quotes -> straight double quotes",
+          "find": "[\\u201c\\u201d«»《》\\u201d″‶ʺˮ‟〝〞⟪⟫⪡⪢⪻⪼„]",
+          "replace": "\"",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "punctuation",
+            "quotes"
+          ]
+        },
+        {
+          "description": "Curly apostrophes -> straight apostrophes",
+          "find": "[\\u2018\\u2019\\u2032]",
+          "replace": "'",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "punctuation",
+            "apostrophes"
+          ]
+        },
+        {
+          "description": "Double single quote -> single quote",
           "find": "''",
           "replace": "'",
           "flags": "g",
           "enabled": true,
-          "enhancedBoundary": false
+          "tags": [
+            "punctuation",
+            "quotes"
+          ]
+        },
+        {
+          "description": "Em dash before comma -> em dash",
+          "find": "—,",
+          "replace": "—",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "punctuation",
+            "dashes"
+          ]
+        },
+        {
+          "description": "AM formatting",
+          "find": "\\b(AM\\b|A\\.M\\.)",
+          "replace": "a.m.",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "punctuation",
+            "formatting"
+          ]
+        },
+        {
+          "description": "PM formatting",
+          "find": "\\b(PM\\b|P\\.M\\.)",
+          "replace": "p.m.",
+          "flags": "gi",
+          "enabled": true,
+          "tags": [
+            "punctuation",
+            "formatting"
+          ]
         }
+      ]
+    },
+    {
+      "id": "formatting",
+      "title": "Formatting",
+      "description": "Rules for fixing formatting issues",
+      "author": "ziIIas",
+      "version": "4",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "Multiple spaces -> single space",
+          "find": " {2,}",
+          "replace": " ",
+          "flags": "g",
+          "enabled": true,
+          "tags": [
+            "formatting",
+            "spacing"
+          ]
+        },
+        {
+          "description": "Remove trailing spaces",
+          "find": "[ \\t]+$",
+          "replace": "",
+          "flags": "gm",
+          "enabled": true,
+          "tags": [
+            "formatting",
+            "spacing"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "number-conversion",
+      "title": "Number Conversion",
+      "description": "Convert standalone numbers 0-100 to words",
+      "author": "ziIIas",
+      "version": "1",
+      "enabled": true,
+      "rules": [
+        {
+          "description": "Convert standalone numbers 0-100 to words",
+          "find": "(?<![\\w./:;\\-–—\\[\\]%˂˃<>])(100|[1-9][0-9]|[0-9])(?![\\w./:;\\-–—\\[\\]%˂˃<>])",
+          "replace": "function(match) { const n = parseInt(match); if (n === 9 || n === 12) return match; const ones = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen']; const tens = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety']; if (n === 100) return 'a hundred'; if (n < 20) return ones[n]; if (n % 10 === 0) return tens[n/10]; return tens[Math.floor(n/10)] + '-' + ones[n%10]; }",
+          "flags": "g",
+          "enabled": true,
+          "askMode": "ask",
+          "tags": ["number-conversion"]
+        }
+      ]
+    }
   ]
-} 
+}
