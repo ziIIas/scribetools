@@ -7,7 +7,8 @@ const { execSync } = require('child_process');
 const rootDir = path.resolve(__dirname, '..');
 const customEditorDir = path.join(rootDir, 'customeditor');
 const distDir = path.join(customEditorDir, 'dist', 'assets');
-const userscriptPath = path.join(rootDir, 'scribetools.user.js');
+const sourceUserscriptPath = path.join(rootDir, 'scribetools.user.js');
+const outputUserscriptPath = path.join(rootDir, 'scribetoolsbuild.user.js');
 
 const shouldMinify = process.argv.includes('--minify');
 
@@ -32,7 +33,7 @@ function escapeForTemplateLiteral(content) {
 }
 
 function updateUserscript(css, js) {
-    const source = fs.readFileSync(userscriptPath, 'utf8');
+    const source = fs.readFileSync(sourceUserscriptPath, 'utf8');
     // Use greedy matching so a previously corrupted block (with duplicated markers)
     // gets fully replaced in one shot.
     const cssPattern = /const CUSTOM_EDITOR_CSS = \/\* CUSTOM_EDITOR_CSS_START \*\/ `[^]*` \/\* CUSTOM_EDITOR_CSS_END \*\//;
@@ -51,11 +52,21 @@ function updateUserscript(css, js) {
     );
 
     if (next === source) {
-        throw new Error('Failed to inject custom editor assets into scribetools.user.js');
+        throw new Error('Failed to inject custom editor assets into userscript');
     }
 
-    fs.writeFileSync(userscriptPath, next);
-    console.log('✅ Updated scribetools.user.js with built custom editor assets');
+    // Update @updateURL and @downloadURL to point to scribetoolsbuild.user.js
+    next = next.replace(
+        /@updateURL\s+https:\/\/github\.com\/ziIIas\/scribetools\/raw\/refs\/heads\/main\/scribetools\.user\.js/,
+        '@updateURL    https://github.com/ziIIas/scribetools/raw/refs/heads/main/scribetoolsbuild.user.js'
+    );
+    next = next.replace(
+        /@downloadURL\s+https:\/\/github\.com\/ziIIas\/scribetools\/raw\/refs\/heads\/main\/scribetools\.user\.js/,
+        '@downloadURL  https://github.com/ziIIas/scribetools/raw/refs/heads/main/scribetoolsbuild.user.js'
+    );
+
+    fs.writeFileSync(outputUserscriptPath, next);
+    console.log('✅ Generated scribetoolsbuild.user.js with built custom editor assets');
 }
 
 function maybeMinify(css, js) {

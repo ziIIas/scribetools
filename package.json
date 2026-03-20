@@ -7,6 +7,7 @@
     "build:userscript:min": "node scripts/build-userscript.js --minify"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "eslint": "^9.39.2"
   }
 }
